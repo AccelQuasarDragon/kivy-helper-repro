@@ -60,3 +60,5 @@ Expected: no hits except `/home/user` (the container's own user) and the noreply
     URL to the 3.5.2 android wheel that overrides the pin. No simple master workaround: answer = develop.
   - #6 cache test 1/2 (develop, arm64, full): build PASS, sdk + full caches saved (~1.7 GB each); Summary step
     crashed (grep no-match under pipefail), fixed.
+  - #7 cache test 2/2 (same inputs as #6): both caches HIT (16 s restore each), build 63 s vs ~16 min cold,
+    saves skipped, Summary ok. Warm runs: ~4 min total. Cache input verified end to end.
