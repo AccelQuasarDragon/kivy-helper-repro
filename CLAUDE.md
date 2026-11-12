@@ -56,3 +56,7 @@ Expected: no hits except `/home/user` (the container's own user) and the noreply
   - #2 master, arm64 only: no capture_logging; FAILS later on the known charset-normalizer cp314 android wheel bug.
   - #3 develop, 2 archs (api 36, ndk 29): PASS = the fix to recommend.
   - #4 cache test (arm64, master): failed (charset bug), so nothing saved; redone on develop.
+  - #5 master, arm64 + `charset-normalizer==2.1.1`: FAIL, same charset wheel error; p4a's resolver adds a direct
+    URL to the 3.5.2 android wheel that overrides the pin. No simple master workaround: answer = develop.
+  - #6 cache test 1/2 (develop, arm64, full): build PASS, sdk + full caches saved (~1.7 GB each); Summary step
+    crashed (grep no-match under pipefail), fixed.

@@ -150,8 +150,9 @@ jobs:
             echo '```'
             sed 's/\x1b\[[0-9;]*m//g' build.log > clean.log 2>/dev/null || true
             # real failure markers first; earlier Tracebacks in p4a logs are often harmless noise
-            line=$(grep -nE 'ImportError|ModuleNotFoundError|BUILD FAILURE|Buildozer failed|Command failed' clean.log 2>/dev/null | head -1 | cut -d: -f1)
-            [ -n "$line" ] || line=$(grep -n 'Traceback' clean.log 2>/dev/null | tail -1 | cut -d: -f1)
+            # || true: no match must not fail the step (bash -eo pipefail)
+            line=$(grep -nE 'ImportError|ModuleNotFoundError|BUILD FAILURE|Buildozer failed|Command failed' clean.log 2>/dev/null | head -1 | cut -d: -f1 || true)
+            [ -n "$line" ] || line=$(grep -n 'Traceback' clean.log 2>/dev/null | tail -1 | cut -d: -f1 || true)
             if [ -n "$line" ]; then start=$(( line > 40 ? line - 40 : 1 )); sed -n "${start},$((line + 15))p" clean.log | cut -c1-300; else echo 'no error found'; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
