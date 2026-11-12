@@ -1,0 +1,113 @@
+name: buildozer repro
+
+# One form, any "my buildozer build broke" question.
+# Inputs -> a buildozer.spec (the image's own `buildozer init` default + overrides) -> a build -> a log.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Run label (what question this answers)'
+        default: 'repro'
+      runner:
+        description: 'Build host'
+        type: choice
+        options: [ubuntu-latest, ubuntu-24.04-arm]
+        default: ubuntu-latest
+      image:
+        description: 'Buildozer container image'
+        default: 'ghcr.io/kivy/buildozer:latest'
+      requirements:
+        description: 'requirements ='
+        default: 'python3,kivy'
+      p4a_branch:
+        description: 'p4a.branch ='
+        default: 'master'
+      archs:
+        description: 'android.archs ='
+        default: 'arm64-v8a, armeabi-v7a'
+      extra:
+        description: 'More spec overrides, ; separated (e.g. android.api=36;android.ndk=29)'
+        default: ''
+      command:
+        description: 'buildozer command'
+        default: 'android debug'
+
+run-name: '${{ inputs.label }} | ${{ inputs.runner }} | p4a ${{ inputs.p4a_branch }} | ${{ inputs.requirements }}'
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk (SDK + NDK need room)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Pull image, record digest
+        run: |
+          docker pull '${{ inputs.image }}'
+          echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' '${{ inputs.image }}')" >> "$GITHUB_ENV"
+          echo "HOST_ARCH=$(uname -m)" >> "$GITHUB_ENV"
+
+      - name: Make spec (buildozer init + overrides)
+        run: |
+          mkdir -p work cache
+          chmod 777 work cache
+          cp stub/main.py work/
+          docker run --rm -v "$PWD/work:/home/user/hostcwd" '${{ inputs.image }}' init
+          sudo chmod -R a+rwX work
+          python3 tools/patch_spec.py work/buildozer.spec \
+            'requirements=${{ inputs.requirements }}' \
+            'p4a.branch=${{ inputs.p4a_branch }}' \
+            'android.archs=${{ inputs.archs }}' \
+            'android.accept_sdk_license=True' \
+            'warn_on_root=0' \
+            'log_level=2' \
+            '${{ inputs.extra }}'
+          echo '--- effective spec (non-comment lines) ---'
+          grep -vE '^\s*(#|$)' work/buildozer.spec
+
+      - name: Build
+        run: |
+          docker run --rm \
+            -v "$PWD/cache:/home/user/.buildozer" \
+            -v "$PWD/work:/home/user/hostcwd" \
+            '${{ inputs.image }}' ${{ inputs.command }} 2>&1 | tee build.log
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "## ${{ inputs.label }}"
+            echo "- host: \`$HOST_ARCH\` (${{ inputs.runner }})"
+            echo "- image: \`$IMAGE_DIGEST\`"
+            echo "- requirements: \`${{ inputs.requirements }}\`, p4a: \`${{ inputs.p4a_branch }}\`, archs: \`${{ inputs.archs }}\`"
+            echo "- extra: \`${{ inputs.extra }}\`"
+            echo '### pip versions seen'
+            echo '```'
+            grep -oE '(Successfully installed|Requirement already satisfied:) pip[^ ]*( in [^ ]*)?( \([0-9.]+\))?|pip-[0-9][0-9.]*' build.log 2>/dev/null | sort | uniq -c | head -20 || true
+            echo '```'
+            echo '### last commands before first error (40 lines)'
+            echo '```'
+            line=$(grep -nE 'Traceback|ImportError|BUILD FAILURE|Command failed|Buildozer failed' build.log 2>/dev/null | head -1 | cut -d: -f1)
+            if [ -n "$line" ]; then start=$(( line > 40 ? line - 40 : 1 )); sed -n "${start},$((line + 15))p" build.log; else echo 'no error found'; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log + apk
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.run_number }}
+          path: |
+            build.log
+            work/buildozer.spec
+            work/bin/*.apk
+          retention-days: 14
+          if-no-files-found: ignore
