@@ -48,3 +48,11 @@ Expected: no hits except `/home/user` (the container's own user) and the noreply
 
 ## Log
 - 2026-11-12: created; run #1 = pip `capture_logging` ImportError repro (kivy only, p4a master, x86).
+- 2026-11-12 results (all cold, ghcr.io/kivy/buildozer:latest, x86):
+  - #1 master, 2 archs: FAIL `capture_logging`. Arch 1 ok (venv pip 25.3 -> 26.3); arch 2 reruns
+    `python -m venv venv` on the same venv, then `pip install -U pip` crashes on mixed pip files.
+    NOT reporter stale state: clean runner. Did not reproduce on Windows (venv rerun kept pip 26.3 intact),
+    so the file-mixing step is Linux/container-specific, mechanism unconfirmed.
+  - #2 master, arm64 only: no capture_logging; FAILS later on the known charset-normalizer cp314 android wheel bug.
+  - #3 develop, 2 archs (api 36, ndk 29): PASS = the fix to recommend.
+  - #4 cache test (arm64, master): failed (charset bug), so nothing saved; redone on develop.
