@@ -31,8 +31,13 @@ on:
       command:
         description: 'buildozer command'
         default: 'android debug'
+      cache:
+        description: 'Cache (see CLAUDE.md protocol): off = cold, only cold runs are evidence; sdk = ~/.buildozer; full = + project .buildozer'
+        type: choice
+        options: ['off', 'sdk', 'full']
+        default: 'off'
 
-run-name: '${{ inputs.label }} | ${{ inputs.runner }} | p4a ${{ inputs.p4a_branch }} | ${{ inputs.requirements }}'
+run-name: '${{ inputs.label }} | ${{ inputs.runner }} | p4a ${{ inputs.p4a_branch }} | ${{ inputs.requirements }} | cache ${{ inputs.cache }}'
 
 jobs:
   build:
@@ -55,10 +60,37 @@ jobs:
           echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' '${{ inputs.image }}')" >> "$GITHUB_ENV"
           echo "HOST_ARCH=$(uname -m)" >> "$GITHUB_ENV"
 
+      # Exact keys only, no restore-keys: a cache from different inputs must never be restored.
+      - name: Cache keys
+        id: ck
+        if: inputs.cache != 'off'
+        run: |
+          sdk=$(printf '%s|%s' "$IMAGE_DIGEST" '${{ inputs.extra }}' | sha256sum | cut -c1-16)
+          full=$(printf '%s|%s|%s|%s|%s|%s' "$IMAGE_DIGEST" '${{ inputs.extra }}' '${{ inputs.archs }}' \
+            '${{ inputs.p4a_branch }}' '${{ inputs.requirements }}' "$(sha256sum stub/main.py)" | sha256sum | cut -c1-16)
+          echo "sdk=bz-sdk-${{ runner.os }}-${{ runner.arch }}-$sdk" >> "$GITHUB_OUTPUT"
+          echo "full=bz-full-${{ runner.os }}-${{ runner.arch }}-$full" >> "$GITHUB_OUTPUT"
+
+      - name: Restore ~/.buildozer (sdk)
+        id: sdk_restore
+        if: inputs.cache != 'off'
+        uses: actions/cache/restore@v4
+        with:
+          path: cache
+          key: ${{ steps.ck.outputs.sdk }}
+
+      - name: Restore project .buildozer (full)
+        id: full_restore
+        if: inputs.cache == 'full'
+        uses: actions/cache/restore@v4
+        with:
+          path: work/.buildozer
+          key: ${{ steps.ck.outputs.full }}
+
       - name: Make spec (buildozer init + overrides)
         run: |
           mkdir -p work cache
-          chmod 777 work cache
+          sudo chmod -R a+rwX work cache
           cp stub/main.py work/
           docker run --rm -v "$PWD/work:/home/user/hostcwd" '${{ inputs.image }}' init
           sudo chmod -R a+rwX work
@@ -80,11 +112,32 @@ jobs:
             -v "$PWD/work:/home/user/hostcwd" \
             '${{ inputs.image }}' ${{ inputs.command }} 2>&1 | tee build.log
 
+      - name: Make cache dirs readable for saving
+        if: always() && inputs.cache != 'off'
+        run: sudo chmod -R a+rwX work cache || true
+
+      # sdk: saved even when the build fails (SDK/NDK downloads are still good).
+      - name: Save ~/.buildozer (sdk)
+        if: always() && inputs.cache != 'off' && steps.sdk_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cache
+          key: ${{ steps.ck.outputs.sdk }}
+
+      # full: saved only after a successful build, so a broken build dir is never reused.
+      - name: Save project .buildozer (full)
+        if: success() && inputs.cache == 'full' && steps.full_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: work/.buildozer
+          key: ${{ steps.ck.outputs.full }}
+
       - name: Summary
         if: always()
         run: |
           {
             echo "## ${{ inputs.label }}"
+            echo "- cache: \`${{ inputs.cache }}\` (sdk hit: \`${{ steps.sdk_restore.outputs.cache-hit || 'n/a' }}\`, full hit: \`${{ steps.full_restore.outputs.cache-hit || 'n/a' }}\`)$( [ '${{ inputs.cache }}' = 'off' ] && echo ' **COLD RUN: counts as evidence**' || echo ' WARM RUN: not evidence (CLAUDE.md)')"
             echo "- host: \`$HOST_ARCH\` (${{ inputs.runner }})"
             echo "- image: \`$IMAGE_DIGEST\`"
             echo "- requirements: \`${{ inputs.requirements }}\`, p4a: \`${{ inputs.p4a_branch }}\`, archs: \`${{ inputs.archs }}\`"
@@ -95,8 +148,11 @@ jobs:
             echo '```'
             echo '### last commands before first error (40 lines)'
             echo '```'
-            line=$(grep -nE 'Traceback|ImportError|BUILD FAILURE|Command failed|Buildozer failed' build.log 2>/dev/null | head -1 | cut -d: -f1)
-            if [ -n "$line" ]; then start=$(( line > 40 ? line - 40 : 1 )); sed -n "${start},$((line + 15))p" build.log; else echo 'no error found'; fi
+            sed 's/\x1b\[[0-9;]*m//g' build.log > clean.log 2>/dev/null || true
+            # real failure markers first; earlier Tracebacks in p4a logs are often harmless noise
+            line=$(grep -nE 'ImportError|ModuleNotFoundError|BUILD FAILURE|Buildozer failed|Command failed' clean.log 2>/dev/null | head -1 | cut -d: -f1)
+            [ -n "$line" ] || line=$(grep -n 'Traceback' clean.log 2>/dev/null | tail -1 | cut -d: -f1)
+            if [ -n "$line" ]; then start=$(( line > 40 ? line - 40 : 1 )); sed -n "${start},$((line + 15))p" clean.log | cut -c1-300; else echo 'no error found'; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 

@@ -31,8 +31,10 @@ Read the run's Summary page first (host arch, image digest, pip versions, lines 
 
 ## Cache protocol (author, 2026-11-12)
 Caches hide bugs (run #1 reproduced a pip bug that lives in the project `.buildozer` build venv;
-a restored cache would have masked it). Planned input `cache: off | sdk | full` (default `off`;
-`sdk` = `~/.buildozer` only: SDK/NDK/p4a download; `full` = also the project `.buildozer`):
+a restored cache would have masked it). Input `cache: off | sdk | full` (default `off`;
+`sdk` = `~/.buildozer` only: SDK/NDK; `full` = also the project `.buildozer`: p4a checkout,
+compiled recipes, build venv). Exact keys only (image digest + inputs + runner arch), no restore-keys;
+`sdk` saves even on failure, `full` saves only on success. The run summary prints COLD/WARM:
 1. A NEW bug: first run cold (`off`).
 2. Iterating after that: `sdk` (or `full` only if the bug is clearly not in the build dirs).
 3. Final check before posting an answer anywhere: cold (`off`) again.
