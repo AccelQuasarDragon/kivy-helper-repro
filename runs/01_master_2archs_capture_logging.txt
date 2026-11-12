@@ -1,0 +1,21 @@
+# Run #1, 2026-11-12, COLD. p4a master, archs arm64-v8a + armeabi-v7a, requirements python3,kivy, ghcr.io/kivy/buildozer:latest\n# https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43236932452 (Build step excerpt: 2nd arch re-runs the venv, then pip crashes)\n
+[DEBUG]:   -> running python -m venv venv
+[INFO]:    Upgrade pip to latest version
+stty: standard input: Inappropriate ioctl for device
+[DEBUG]:   -> running bash -c source venv/bin/activate && pip install -U pip
+[DEBUG]:   	Traceback (most recent call last):
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/bin/pip", line 3, in <module>
+[DEBUG]:   	    from pip._internal.cli.main import main
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/cli/main.py", line 11, in <module>
+[DEBUG]:   	    from pip._internal.cli.autocompletion import autocomplete
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/cli/autocompletion.py", line 12, in <module>
+[DEBUG]:   	    from pip._internal.cli.main_parser import create_main_parser
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/cli/main_parser.py", line 9, in <module>
+[DEBUG]:   	    from pip._internal.build_env import get_runnable_pip
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/build_env/__init__.py", line 8, in <module>
+[DEBUG]:   	    from pip._internal.build_env.installer import (
+[DEBUG]:   	    ...<2 lines>...
+[DEBUG]:   	    )
+[DEBUG]:   	  File "/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/build_env/installer.py", line 21, in <module>
+[DEBUG]:   	    from pip._internal.utils.logging import VERBOSE, capture_logging
+[DEBUG]:   	ImportError: cannot import name 'capture_logging' from 'pip._internal.utils.logging' (/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/venv/lib/python3.14/site-packages/pip/_internal/utils/logging.py)

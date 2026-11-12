@@ -1,0 +1,3 @@
+# Run #3, 2026-11-12, COLD. p4a develop, android.api=36, android.ndk=29, archs arm64-v8a + armeabi-v7a, requirements python3,kivy\n# https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43240836542 (Build step excerpt: success)\n
+# Android packaging done!
+# APK myapp-0.1-arm64-v8a_armeabi-v7a-debug.apk available in the bin directory

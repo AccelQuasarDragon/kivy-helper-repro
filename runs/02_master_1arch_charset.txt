@@ -1,0 +1,4 @@
+# Run #2, 2026-11-12, COLD. p4a master, arch arm64-v8a only, requirements python3,kivy\n# https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43240833031 (Build step excerpt)\n
+[DEBUG]:   -> running bash -c venv/bin/pip install -v --target '/home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a/build/python-installs/myapp/arm64-v8a' --no-deps -r requirements.txt
+[DEBUG]:   	Using pip 26.3 from /home/user/hostcwd/.buildozer/android/platform/build-arm64-v8a/build/venv/lib/python3.14/site-packages/pip (python 3.14)
+[DEBUG]:   	ERROR: charset_normalizer-3.5.2-cp314-cp314-android_24_arm64_v8a.whl is not a supported wheel on this platform.
