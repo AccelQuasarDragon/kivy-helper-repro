@@ -62,3 +62,5 @@ Expected: no hits except `/home/user` (the container's own user) and the noreply
     crashed (grep no-match under pipefail), fixed.
   - #7 cache test 2/2 (same inputs as #6): both caches HIT (16 s restore each), build 63 s vs ~16 min cold,
     saves skipped, Summary ok. Warm runs: ~4 min total. Cache input verified end to end.
+- 2026-11-12: release request posted upstream: kivy/python-for-android#3411 (cites runs #1, #2, #3, #5 + runs/
+  excerpts at commit 50bea6c: keep runs/ files unchanged so the line links stay valid). Related: #3364, #3366.
