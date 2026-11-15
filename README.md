@@ -12,6 +12,10 @@ Reproduce "my buildozer build broke" reports on GitHub Actions instead of a loca
 | requirements / p4a_branch / archs | the usual spec keys |
 | extra | more overrides, `;` separated: `android.api=36;android.ndk=29` |
 | command | buildozer command, default `android debug` |
+| repo / ref / app | build a public GitHub repo (or an app dir of this repo, default `stub`) |
+| add_archs | archs appended if missing (`x86_64` for an emulator) |
+| app_config | JSON baked into the app as `app_config.json` |
+| cache / apk_cache | build caches (only `off` runs are evidence) / reuse an identical built APK |
 
 The spec is the image's own `buildozer init` default plus your overrides
 (`tools/patch_spec.py`), so every run starts from a clean, known spec.
@@ -21,3 +25,6 @@ uploaded as an artifact (14 days).
 
 What a run does NOT match: the reporter's own `.buildozer` / `~/.buildozer`
 leftovers (runs always start clean) and rootless podman vs docker details.
+
+**Actions -> inspect apk**: static facts of an APK plus an optional headless emulator run with
+screenshots (software rendering: no GPU bugs). See [docs/inspect.md](docs/inspect.md).

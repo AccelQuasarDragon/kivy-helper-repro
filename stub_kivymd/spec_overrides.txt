@@ -1,0 +1,15 @@
+# key=value lines applied by build.yml after the base spec, before the form inputs.
+# Mimics a reported app: Kivy 2.3.2, KivyMD 2.0.1.dev0 (git master), p4a develop. Python = p4a develop's default
+# (the report says 3.14; unverified here: read the libpython line of the inspect summary).
+# materialshapes (needs pycairo) is left out on purpose: only kivymd fitimage/loadingindicator import it.
+title = StubKivyMD
+package.name = stubkivymd
+package.domain = org.khr
+requirements = python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor,asynckivy,asyncgui,pillow
+source.include_exts = py,png,jpg,kv,atlas,json
+p4a.branch = develop
+android.api = 35
+android.ndk = 29
+orientation = portrait
+# the reported device is arm64; inspect.yml appends x86_64 for the emulator
+android.archs = arm64-v8a

@@ -1,7 +1,11 @@
 name: buildozer repro
 
 # One form, any "my buildozer build broke" question.
-# Inputs -> a buildozer.spec (the image's own `buildozer init` default + overrides) -> a build -> a log.
+# Inputs -> a buildozer.spec -> a build -> a log (+ the APK).
+# Spec = the app's own buildozer.spec, else the image's `buildozer init` default;
+# then the app dir's spec_overrides.txt (if any); then the non-empty form inputs; then `extra`.
+# Also a reusable workflow (workflow_call): inspect.yml builds through it.
+# Every input reaches the shell through env: variables, never ${{ inputs.x }} inside run:.
 on:
   workflow_dispatch:
     inputs:
@@ -16,17 +20,32 @@ on:
       image:
         description: 'Buildozer container image'
         default: 'ghcr.io/kivy/buildozer:latest'
+      repo:
+        description: 'Public GitHub repo owner/name to build (empty = an app dir of THIS repo)'
+        default: ''
+      ref:
+        description: 'Branch, tag or commit of repo'
+        default: 'HEAD'
+      app:
+        description: 'App dir (holds main.py): in this repo when repo is empty (default stub), else in repo (default .)'
+        default: ''
       requirements:
-        description: 'requirements ='
+        description: 'requirements = (empty = keep the app spec / spec_overrides.txt value)'
         default: 'python3,kivy'
       p4a_branch:
-        description: 'p4a.branch ='
+        description: 'p4a.branch = (empty = keep)'
         default: 'master'
       archs:
-        description: 'android.archs ='
+        description: 'android.archs = (empty = keep)'
         default: 'arm64-v8a, armeabi-v7a'
+      add_archs:
+        description: 'Archs appended to android.archs if missing (e.g. x86_64 for an emulator)'
+        default: ''
       extra:
         description: 'More spec overrides, ; separated (e.g. android.api=36;android.ndk=29)'
+        default: ''
+      app_config:
+        description: 'JSON written to app_config.json next to main.py (empty = none); stub_kivymd reads it'
         default: ''
       command:
         description: 'buildozer command'
@@ -36,8 +55,38 @@ on:
         type: choice
         options: ['off', 'sdk', 'full']
         default: 'off'
+      apk_cache:
+        description: 'Reuse a cached APK built from exactly the same inputs (skips the build; never evidence)'
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      label: {type: string, default: 'repro'}
+      runner: {type: string, default: 'ubuntu-latest'}
+      image: {type: string, default: 'ghcr.io/kivy/buildozer:latest'}
+      repo: {type: string, default: ''}
+      ref: {type: string, default: 'HEAD'}
+      app: {type: string, default: ''}
+      requirements: {type: string, default: ''}
+      p4a_branch: {type: string, default: ''}
+      archs: {type: string, default: ''}
+      add_archs: {type: string, default: ''}
+      extra: {type: string, default: ''}
+      app_config: {type: string, default: ''}
+      command: {type: string, default: 'android debug'}
+      cache: {type: string, default: 'off'}
+      apk_cache: {type: boolean, default: false}
+    outputs:
+      artifact: {value: '${{ jobs.build.outputs.artifact }}'}
+      apk_hit: {value: '${{ jobs.build.outputs.apk_hit }}'}
+      cold: {value: '${{ jobs.build.outputs.cold }}'}
+      image_digest: {value: '${{ jobs.build.outputs.image_digest }}'}
+      src_id: {value: '${{ jobs.build.outputs.src_id }}'}
 
-run-name: '${{ inputs.label }} | ${{ inputs.runner }} | p4a ${{ inputs.p4a_branch }} | ${{ inputs.requirements }} | cache ${{ inputs.cache }}'
+run-name: '${{ inputs.label }} | ${{ inputs.runner }} | ${{ inputs.repo || inputs.app || ''stub'' }} | p4a ${{ inputs.p4a_branch }} | ${{ inputs.requirements }} | cache ${{ inputs.cache }}'
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -46,6 +95,28 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      LABEL: ${{ inputs.label }}
+      RUNNER_NAME_IN: ${{ inputs.runner }}
+      IMAGE: ${{ inputs.image }}
+      REPO: ${{ inputs.repo }}
+      REF: ${{ inputs.ref }}
+      APP: ${{ inputs.app }}
+      REQUIREMENTS: ${{ inputs.requirements }}
+      P4A_BRANCH: ${{ inputs.p4a_branch }}
+      ARCHS: ${{ inputs.archs }}
+      ADD_ARCHS: ${{ inputs.add_archs }}
+      EXTRA: ${{ inputs.extra }}
+      APP_CONFIG: ${{ inputs.app_config }}
+      COMMAND: ${{ inputs.command }}
+      CACHE: ${{ inputs.cache }}
+      APK_CACHE: ${{ inputs.apk_cache }}
+    outputs:
+      artifact: build-${{ github.run_number }}
+      apk_hit: ${{ steps.apk_restore.outputs.cache-hit == 'true' }}
+      cold: ${{ steps.out.outputs.cold }}
+      image_digest: ${{ steps.out.outputs.image_digest }}
+      src_id: ${{ steps.out.outputs.src_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -56,24 +127,54 @@ jobs:
 
       - name: Pull image, record digest
         run: |
-          docker pull '${{ inputs.image }}'
-          echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' '${{ inputs.image }}')" >> "$GITHUB_ENV"
+          docker pull "$IMAGE"
+          echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")" >> "$GITHUB_ENV"
           echo "HOST_ARCH=$(uname -m)" >> "$GITHUB_ENV"
+
+      # SRC_ID = what was built: repo@resolved-sha:app, or local:<app>:<hash of its tracked files>.
+      - name: Resolve source
+        run: |
+          case "$APP" in *..*|/*) echo "bad app dir: $APP"; exit 1;; esac
+          [[ "$APP" =~ ^[A-Za-z0-9_./-]*$ ]] || { echo "bad app dir: $APP"; exit 1; }
+          if [ -n "$REPO" ]; then
+            [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "bad repo: $REPO"; exit 1; }
+            [[ "$REF" =~ ^[A-Za-z0-9_./-]+$ ]] || { echo "bad ref: $REF"; exit 1; }
+            git init -q src
+            git -C src fetch -q --depth 1 "https://github.com/$REPO" "$REF"
+            git -C src checkout -q FETCH_HEAD
+            sha=$(git -C src rev-parse HEAD)
+            dir="src/${APP:-.}"
+            id="$REPO@$sha:${APP:-.}"
+          else
+            dir="${APP:-stub}"
+            id="local:$dir:$(git ls-files -s -- "$dir" | sha256sum | cut -c1-16)"
+          fi
+          [ -f "$dir/main.py" ] || { echo "no main.py in $dir"; exit 1; }
+          echo "APP_DIR=$dir" >> "$GITHUB_ENV"
+          echo "SRC_ID=$id" >> "$GITHUB_ENV"
+          echo "source: $id"
 
       # Exact keys only, no restore-keys: a cache from different inputs must never be restored.
       - name: Cache keys
         id: ck
-        if: inputs.cache != 'off'
+        if: inputs.cache != 'off' || inputs.apk_cache
         run: |
-          sdk=$(printf '%s|%s' "$IMAGE_DIGEST" '${{ inputs.extra }}' | sha256sum | cut -c1-16)
-          full=$(printf '%s|%s|%s|%s|%s|%s' "$IMAGE_DIGEST" '${{ inputs.extra }}' '${{ inputs.archs }}' \
-            '${{ inputs.p4a_branch }}' '${{ inputs.requirements }}' "$(sha256sum stub/main.py)" | sha256sum | cut -c1-16)
-          echo "sdk=bz-sdk-${{ runner.os }}-${{ runner.arch }}-$sdk" >> "$GITHUB_OUTPUT"
-          echo "full=bz-full-${{ runner.os }}-${{ runner.arch }}-$full" >> "$GITHUB_OUTPUT"
+          h() { printf '%s|' "$@" | sha256sum | cut -c1-16; }
+          echo "sdk=bz-sdk-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$EXTRA")" >> "$GITHUB_OUTPUT"
+          echo "full=bz-full-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$EXTRA" "$ARCHS" "$ADD_ARCHS" "$P4A_BRANCH" "$REQUIREMENTS" "$SRC_ID" "$APP_CONFIG")" >> "$GITHUB_OUTPUT"
+          echo "apk=bz-apk-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$SRC_ID" "$REQUIREMENTS" "$P4A_BRANCH" "$ARCHS" "$ADD_ARCHS" "$EXTRA" "$APP_CONFIG" "$COMMAND")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore built APK (apk_cache)
+        id: apk_restore
+        if: inputs.apk_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/bin
+          key: ${{ steps.ck.outputs.apk }}
 
       - name: Restore ~/.buildozer (sdk)
         id: sdk_restore
-        if: inputs.cache != 'off'
+        if: inputs.cache != 'off' && steps.apk_restore.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v4
         with:
           path: cache
@@ -81,44 +182,61 @@ jobs:
 
       - name: Restore project .buildozer (full)
         id: full_restore
-        if: inputs.cache == 'full'
+        if: inputs.cache == 'full' && steps.apk_restore.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v4
         with:
           path: work/.buildozer
           key: ${{ steps.ck.outputs.full }}
 
-      - name: Make spec (buildozer init + overrides)
+      - name: Make spec (app spec or buildozer init, then overrides)
+        if: steps.apk_restore.outputs.cache-hit != 'true'
         run: |
           mkdir -p work cache
           sudo chmod -R a+rwX work cache
-          cp stub/main.py work/
-          docker run --rm -v "$PWD/work:/home/user/hostcwd" '${{ inputs.image }}' init
+          (cd "$APP_DIR" && tar --exclude=.git --exclude=.buildozer --exclude=bin -cf - .) | tar -C work -xf -
+          if [ -f work/buildozer.spec ]; then
+            echo "base spec: the app's own buildozer.spec"
+          else
+            echo 'base spec: buildozer init (image default)'
+            docker run --rm -v "$PWD/work:/home/user/hostcwd" "$IMAGE" init
+          fi
           sudo chmod -R a+rwX work
-          python3 tools/patch_spec.py work/buildozer.spec \
-            'requirements=${{ inputs.requirements }}' \
-            'p4a.branch=${{ inputs.p4a_branch }}' \
-            'android.archs=${{ inputs.archs }}' \
-            'android.accept_sdk_license=True' \
-            'warn_on_root=0' \
-            'log_level=2' \
-            '${{ inputs.extra }}'
+          args=()
+          if [ -f work/spec_overrides.txt ]; then
+            while IFS= read -r line || [ -n "$line" ]; do
+              [[ "$line" =~ ^[[:space:]]*(#|$) ]] || args+=("$line")
+            done < work/spec_overrides.txt
+          fi
+          [ -z "$REQUIREMENTS" ] || args+=("requirements=$REQUIREMENTS")
+          [ -z "$P4A_BRANCH" ] || args+=("p4a.branch=$P4A_BRANCH")
+          [ -z "$ARCHS" ] || args+=("android.archs=$ARCHS")
+          args+=('android.accept_sdk_license=True' 'warn_on_root=0' 'log_level=2' "$EXTRA")
+          [ -z "$ADD_ARCHS" ] || args+=("android.archs+=$ADD_ARCHS")
+          if [ -n "$APP_CONFIG" ]; then
+            printf '%s\n' "$APP_CONFIG" | python3 -c 'import json,sys; json.load(sys.stdin)' || { echo 'app_config is not valid JSON'; exit 1; }
+            printf '%s\n' "$APP_CONFIG" > work/app_config.json
+            args+=('source.include_exts+=json')
+          fi
+          python3 tools/patch_spec.py work/buildozer.spec "${args[@]}"
           echo '--- effective spec (non-comment lines) ---'
           grep -vE '^\s*(#|$)' work/buildozer.spec
 
       - name: Build
+        if: steps.apk_restore.outputs.cache-hit != 'true'
         run: |
+          read -r -a cmd <<< "$COMMAND"
           docker run --rm \
             -v "$PWD/cache:/home/user/.buildozer" \
             -v "$PWD/work:/home/user/hostcwd" \
-            '${{ inputs.image }}' ${{ inputs.command }} 2>&1 | tee build.log
+            "$IMAGE" "${cmd[@]}" 2>&1 | tee build.log
 
       - name: Make cache dirs readable for saving
-        if: always() && inputs.cache != 'off'
+        if: always() && (inputs.cache != 'off' || inputs.apk_cache)
         run: sudo chmod -R a+rwX work cache || true
 
       # sdk: saved even when the build fails (SDK/NDK downloads are still good).
       - name: Save ~/.buildozer (sdk)
-        if: always() && inputs.cache != 'off' && steps.sdk_restore.outputs.cache-hit != 'true'
+        if: always() && inputs.cache != 'off' && steps.sdk_restore.outcome == 'success' && steps.sdk_restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: cache
@@ -126,22 +244,49 @@ jobs:
 
       # full: saved only after a successful build, so a broken build dir is never reused.
       - name: Save project .buildozer (full)
-        if: success() && inputs.cache == 'full' && steps.full_restore.outputs.cache-hit != 'true'
+        if: success() && inputs.cache == 'full' && steps.full_restore.outcome == 'success' && steps.full_restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: work/.buildozer
           key: ${{ steps.ck.outputs.full }}
 
+      - name: Save built APK (apk_cache, success only)
+        if: success() && inputs.apk_cache && steps.apk_restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: work/bin
+          key: ${{ steps.ck.outputs.apk }}
+
+      - name: Outputs
+        id: out
+        if: always()
+        env:
+          APK_HIT: ${{ steps.apk_restore.outputs.cache-hit }}
+        run: |
+          cold=false
+          if [ "$CACHE" = 'off' ] && [ "$APK_HIT" != 'true' ]; then cold=true; fi
+          echo "cold=$cold" >> "$GITHUB_OUTPUT"
+          echo "image_digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "src_id=$SRC_ID" >> "$GITHUB_OUTPUT"
+
       - name: Summary
         if: always()
+        env:
+          SDK_HIT: ${{ steps.sdk_restore.outputs.cache-hit || 'n/a' }}
+          FULL_HIT: ${{ steps.full_restore.outputs.cache-hit || 'n/a' }}
+          APK_HIT: ${{ steps.apk_restore.outputs.cache-hit || 'n/a' }}
+          COLD: ${{ steps.out.outputs.cold }}
         run: |
           {
-            echo "## ${{ inputs.label }}"
-            echo "- cache: \`${{ inputs.cache }}\` (sdk hit: \`${{ steps.sdk_restore.outputs.cache-hit || 'n/a' }}\`, full hit: \`${{ steps.full_restore.outputs.cache-hit || 'n/a' }}\`)$( [ '${{ inputs.cache }}' = 'off' ] && echo ' **COLD RUN: counts as evidence**' || echo ' WARM RUN: not evidence (CLAUDE.md)')"
-            echo "- host: \`$HOST_ARCH\` (${{ inputs.runner }})"
+            echo "## build: $LABEL"
+            if [ "$COLD" = 'true' ]; then verdict=' **COLD RUN: counts as evidence**'; else verdict=' WARM RUN: not evidence (CLAUDE.md)'; fi
+            echo "- cache: \`$CACHE\` (sdk hit: \`$SDK_HIT\`, full hit: \`$FULL_HIT\`, apk_cache: \`$APK_CACHE\`, apk hit: \`$APK_HIT\`)$verdict"
+            echo "- host: \`$HOST_ARCH\` ($RUNNER_NAME_IN)"
             echo "- image: \`$IMAGE_DIGEST\`"
-            echo "- requirements: \`${{ inputs.requirements }}\`, p4a: \`${{ inputs.p4a_branch }}\`, archs: \`${{ inputs.archs }}\`"
-            echo "- extra: \`${{ inputs.extra }}\`"
+            echo "- source: \`$SRC_ID\`"
+            echo "- requirements: \`$REQUIREMENTS\`, p4a: \`$P4A_BRANCH\`, archs: \`$ARCHS\` (+ \`$ADD_ARCHS\`)  (empty = the app's own value)"
+            echo "- extra: \`$EXTRA\`; app_config: \`$APP_CONFIG\`"
+            if [ "$APK_HIT" = 'true' ]; then echo '- build skipped: APK restored from the apk cache'; exit 0; fi
             echo '### pip versions seen'
             echo '```'
             grep -oE '(Successfully installed|Requirement already satisfied:) pip[^ ]*( in [^ ]*)?( \([0-9.]+\))?|pip-[0-9][0-9.]*' build.log 2>/dev/null | sort | uniq -c | head -20 || true

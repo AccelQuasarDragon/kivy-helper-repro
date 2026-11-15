@@ -1,0 +1,360 @@
+name: inspect apk
+
+# Inspect an Android APK on GitHub: static facts (aapt2 + bundled Python packages), and
+# optionally a headless run on an x86_64 emulator with taps + screenshots + the runner's OWN logcat.
+# Screenshots are pushed to the orphan branch `shots` (shots/<run_id>/) so raw URLs unfurl in Discord.
+# The emulator renders in SOFTWARE (SwiftShader): GPU-driver / hardware bugs cannot show up here.
+# Docs: docs/inspect.md. Every input reaches the shell through env: variables only.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Run label (what question this answers)'
+        default: 'inspect'
+      apk_url:
+        description: 'https URL of an APK to inspect (set = no build; empty = build repo/app below)'
+        default: ''
+      repo:
+        description: 'Public GitHub repo owner/name to build (empty = an app dir of THIS repo)'
+        default: ''
+      ref:
+        description: 'Branch, tag or commit of repo'
+        default: 'HEAD'
+      app:
+        description: 'App dir: in this repo when repo is empty (default stub_kivymd), else in repo (default .)'
+        default: ''
+      archs:
+        description: 'android.archs = (empty = the app''s own); x86_64 is added unless static_only'
+        default: ''
+      extra:
+        description: 'Spec overrides, ; separated (e.g. android.api=35;p4a.branch=develop)'
+        default: ''
+      app_config:
+        description: 'JSON baked as app_config.json (stub_kivymd: {"shadows": false, "transition": "Fade"})'
+        default: ''
+      static_only:
+        description: 'Static facts only (no emulator)'
+        type: boolean
+        default: false
+      api_level:
+        description: 'Emulator API level (x86_64 google_apis image)'
+        default: '35'
+      profile:
+        description: 'Emulator device profile (avdmanager id; pixel_6 = 1080x2400)'
+        default: 'pixel_6'
+      taps:
+        description: 'Tap steps x,y[,wait_s] separated by ; (screenshot after launch and after each tap)'
+        default: ''
+      launch_wait:
+        description: 'Seconds to wait after launch before the first screenshot'
+        default: '30'
+      cache:
+        description: 'off = cold (evidence); sdk / full = build caches + the built-APK cache (warm, not evidence)'
+        type: choice
+        options: ['off', 'sdk', 'full']
+        default: 'off'
+      image:
+        description: 'Buildozer container image'
+        default: 'ghcr.io/kivy/buildozer:latest'
+
+run-name: '${{ inputs.label }} | inspect | ${{ inputs.apk_url != '''' && ''apk_url'' || (inputs.repo || inputs.app || ''stub_kivymd'') }} | api ${{ inputs.api_level }} | cache ${{ inputs.cache }}'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.v.outputs.app }}
+      add_archs: ${{ steps.v.outputs.add_archs }}
+    steps:
+      - name: Validate inputs
+        id: v
+        shell: bash
+        env:
+          APK_URL: ${{ inputs.apk_url }}
+          REPO: ${{ inputs.repo }}
+          APP: ${{ inputs.app }}
+          API_LEVEL: ${{ inputs.api_level }}
+          PROFILE: ${{ inputs.profile }}
+          LAUNCH_WAIT: ${{ inputs.launch_wait }}
+          TAPS: ${{ inputs.taps }}
+          STATIC_ONLY: ${{ inputs.static_only }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [ -z "$APK_URL" ] || [[ "$APK_URL" =~ ^https://[^[:space:]\'\"\`]+$ ]] || fail 'apk_url must be one https URL'
+          [[ "$API_LEVEL" =~ ^[0-9]{2}$ ]] || fail 'api_level must be a number like 35'
+          [[ "$PROFILE" =~ ^[A-Za-z0-9_.-]+$ ]] || fail 'bad profile'
+          [[ "$LAUNCH_WAIT" =~ ^[0-9]{1,3}$ ]] || fail 'launch_wait must be whole seconds'
+          [[ "$TAPS" =~ ^[0-9,.\;\ ]*$ ]] || fail 'taps: only x,y[,wait_s] steps separated by ;'
+          if [ -n "$REPO" ]; then app="${APP:-.}"; else app="${APP:-stub_kivymd}"; fi
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          if [ "$STATIC_ONLY" = 'true' ]; then echo 'add_archs=' >> "$GITHUB_OUTPUT"; else echo 'add_archs=x86_64' >> "$GITHUB_OUTPUT"; fi
+
+  build:
+    needs: check
+    if: inputs.apk_url == ''
+    uses: ./.github/workflows/build.yml
+    with:
+      label: ${{ inputs.label }}
+      image: ${{ inputs.image }}
+      repo: ${{ inputs.repo }}
+      ref: ${{ inputs.ref }}
+      app: ${{ needs.check.outputs.app }}
+      archs: ${{ inputs.archs }}
+      add_archs: ${{ needs.check.outputs.add_archs }}
+      extra: ${{ inputs.extra }}
+      app_config: ${{ inputs.app_config }}
+      cache: ${{ inputs.cache }}
+      apk_cache: ${{ inputs.cache != 'off' }}
+
+  inspect:
+    needs: [check, build]
+    if: always() && needs.check.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      LABEL: ${{ inputs.label }}
+      APK_URL: ${{ inputs.apk_url }}
+      STATIC_ONLY: ${{ inputs.static_only }}
+      API_LEVEL: ${{ inputs.api_level }}
+      PROFILE: ${{ inputs.profile }}
+      TAPS: ${{ inputs.taps }}
+      LAUNCH_WAIT: ${{ inputs.launch_wait }}
+      CACHE: ${{ inputs.cache }}
+      APK_HIT: ${{ needs.build.outputs.apk_hit || 'n/a' }}
+      COLD: ${{ needs.build.outputs.cold || 'n/a' }}
+      IMAGE_DIGEST: ${{ needs.build.outputs.image_digest || 'n/a (apk_url)' }}
+      SRC_ID: ${{ needs.build.outputs.src_id || 'n/a (apk_url)' }}
+      OUT: out
+    outputs:
+      shots: ${{ steps.res.outputs.shots }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get APK (build artifact)
+        if: inputs.apk_url == ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+          path: apkdl
+
+      - name: Get APK (apk_url)
+        if: inputs.apk_url != ''
+        run: |
+          mkdir -p apkdl
+          curl -fsSL --proto '=https' --max-filesize 314572800 -o apkdl/download.apk "$APK_URL"
+
+      - name: Static facts (aapt2 badging + bundled Python packages)
+        run: |
+          mkdir -p "$OUT"
+          mapfile -t apks < <(find apkdl -name '*.apk' | sort)
+          [ "${#apks[@]}" -gt 0 ] || { echo '::error::no APK found'; exit 1; }
+          apk="${apks[0]}"
+          echo "APK=$PWD/$apk" >> "$GITHUB_ENV"
+          aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2
+          "$aapt2" dump badging "$apk" > "$OUT/badging.txt"
+          pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$OUT/badging.txt")
+          echo "PKG=$pkg" >> "$GITHUB_ENV"
+          echo "TARGET_SDK=$(sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p" "$OUT/badging.txt")" >> "$GITHUB_ENV"
+          echo "MIN_SDK=$(sed -n "s/^\(minSdkVersion\|sdkVersion\):'\([0-9]*\)'.*/\2/p" "$OUT/badging.txt" | head -1)" >> "$GITHUB_ENV"
+          echo "ABIS=$(sed -n "s/^native-code: //p" "$OUT/badging.txt" | tr -d "'")" >> "$GITHUB_ENV"
+          echo "APK_NAME=$(basename "$apk")" >> "$GITHUB_ENV"
+          echo "APK_SHA=$(sha256sum "$apk" | cut -c1-64)" >> "$GITHUB_ENV"
+          printf '%s\n' "${apks[@]}" > "$OUT/apks_found.txt"
+          python3 tools/apk_pkgs.py "$apk" > "$OUT/python_packages.md"
+
+      - name: Enable KVM
+        if: inputs.static_only == false
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # emu_run.sh always exits 0 (results are files), so a failed step here = the emulator itself.
+      # The action has no retry input: attempt 2 runs only when attempt 1 failed.
+      - name: Emulator run (attempt 1)
+        id: emu1
+        if: inputs.static_only == false
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ inputs.profile }}
+          cores: 4
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash tools/emu_run.sh
+
+      - name: Emulator run (attempt 2)
+        id: emu2
+        if: inputs.static_only == false && steps.emu1.outcome == 'failure'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.api_level }}
+          target: google_apis
+          arch: x86_64
+          profile: ${{ inputs.profile }}
+          cores: 4
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot
+          script: bash tools/emu_run.sh
+
+      - name: Results + summary
+        id: res
+        if: always()
+        env:
+          EMU1: ${{ steps.emu1.outcome }}
+          EMU2: ${{ steps.emu2.outcome }}
+        run: |
+          shots=false
+          ls "$OUT"/*.png >/dev/null 2>&1 && shots=true
+          echo "shots=$shots" >> "$GITHUB_OUTPUT"
+          rd() { [ -f "$OUT/$1" ] && tr -d '\r' < "$OUT/$1" || echo "n/a"; }
+          if [ "$COLD" = 'true' ]; then verdict='**COLD RUN: counts as evidence**';
+          elif [ "$COLD" = 'n/a' ]; then verdict='no build (apk_url): the APK itself is the input';
+          else verdict='WARM RUN: not evidence (CLAUDE.md)'; fi
+          {
+            echo "## inspect: $LABEL"
+            echo
+            echo '> **The emulator renders in SOFTWARE (SwiftShader), not on a real GPU (e.g. Adreno / Mali). GPU-driver and hardware bugs CANNOT show up here: a clean run here does not clear them.**'
+            echo
+            echo "- APK: \`$APK_NAME\` sha256 \`$APK_SHA\` (from: ${APK_URL:+apk_url}${APK_URL:-build \`$SRC_ID\`})"
+            echo "- build image: \`$IMAGE_DIGEST\`"
+            echo "- cache: \`$CACHE\`, apk cache hit: \`$APK_HIT\`. $verdict"
+            echo "- inputs: static_only \`$STATIC_ONLY\`, api_level \`$API_LEVEL\`, profile \`$PROFILE\`, launch_wait \`$LAUNCH_WAIT\`, taps \`$TAPS\`"
+            echo '### static facts'
+            echo "- package \`$PKG\`, targetSdk \`$TARGET_SDK\`, minSdk \`$MIN_SDK\`, ABIs \`$ABIS\`"
+            if [ "${TARGET_SDK:-0}" -ge 35 ] 2>/dev/null; then
+              echo "- targetSdk >= 35: on Android 15+ (API 35+) the system ENFORCES edge-to-edge for this APK; the app draws under the status / navigation bars unless it handles insets."
+            fi
+            echo '<details><summary>permissions + full badging</summary>'
+            echo
+            echo '```'
+            grep -E '^(uses-permission|launchable-activity|application:|native-code)' "$OUT/badging.txt" | cut -c1-200 || true
+            echo '```'
+            echo '</details>'
+            echo
+            echo '### bundled Python packages'
+            cat "$OUT/python_packages.md"
+            if [ "$STATIC_ONLY" != 'true' ]; then
+              echo '### emulator run'
+              echo "- emulator image: \`system-images;android-$API_LEVEL;google_apis;x86_64\`, fingerprint \`$(rd device_fingerprint.txt)\`, screen \`$(rd wm_size.txt)\`"
+              echo "- attempts: 1 = \`$EMU1\`, 2 = \`${EMU2:-skipped}\`"
+              echo "- install: \`$(rd install.txt | tail -1)\`; app pid at end: \`$(rd pid_at_end.txt)\` (none = not running = crashed or exited)"
+              [ -f "$OUT/errors.txt" ] && { echo '- driver errors:'; echo '```'; cat "$OUT/errors.txt"; echo '```'; }
+              echo "- screenshots: $(ls "$OUT"/*.png 2>/dev/null | wc -l) (sheet + raw links: the shots job summary below)"
+              if [ -f "$OUT/logcat.txt" ]; then
+                tr -d '\r' < "$OUT/logcat.txt" > "$OUT/logcat_clean.txt"
+                echo '#### logcat: Python tracebacks / errors / FATAL (first 40 hits)'
+                echo '```'
+                grep -nE 'Traceback|python *: .*(Error|Exception)|FATAL|Fatal signal|AndroidRuntime: |SIGSEGV' "$OUT/logcat_clean.txt" | cut -c1-300 | head -40 || true
+                echo '```'
+                tb=$(grep -nE ' python *: Traceback' "$OUT/logcat_clean.txt" | head -1 | cut -d: -f1 || true)
+                if [ -n "$tb" ]; then
+                  echo '#### first Python traceback'
+                  echo '```'
+                  sed -n "${tb},\$p" "$OUT/logcat_clean.txt" | grep -E ' python *: ' | head -30 | cut -c1-300
+                  echo '```'
+                else
+                  echo '- no Python traceback in logcat'
+                fi
+                echo '#### app output lines tagged python (first 30)'
+                echo '```'
+                grep -E ' python *: ' "$OUT/logcat_clean.txt" | head -30 | cut -c1-300 || true
+                echo '```'
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload screenshots + logcat
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inspect-${{ github.run_number }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # The ONLY job with write access: it pushes the PNGs to the orphan branch `shots`.
+  shots:
+    needs: inspect
+    if: always() && needs.inspect.outputs.shots == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: inspect-${{ github.run_number }}
+          path: out
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Contact sheet
+        run: |
+          mkdir -p pub
+          cp out/*.png pub/
+          uv run --script tools/contact_sheet.py pub/sheet.png out/*.png
+
+      - name: Push to branch shots (shots/<run_id>/)
+        env:
+          TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git init -q shotsrepo
+          cd shotsrepo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add origin "$url"
+          if git ls-remote --exit-code origin refs/heads/shots >/dev/null 2>&1; then
+            git fetch -q --depth 1 origin shots
+            git checkout -q -b shots FETCH_HEAD
+          else
+            git checkout -q --orphan shots
+            printf '# shots\nScreenshots pushed by inspect.yml runs (shots/<run_id>/). Orphan branch: no code.\n' > README.md
+            git add README.md
+          fi
+          mkdir -p "shots/$RUN_ID"
+          cp ../pub/*.png "shots/$RUN_ID/"
+          git add "shots/$RUN_ID"
+          git commit -q -m "shots for run $RUN_ID"
+          for _ in 1 2 3; do
+            git push -q origin HEAD:shots && exit 0
+            git fetch -q --depth 1 origin shots && git rebase -q FETCH_HEAD || true
+          done
+          echo '::error::push to shots failed'; exit 1
+
+      - name: Summary (screenshot URLs)
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          base="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/shots/shots/$RUN_ID"
+          {
+            echo '## screenshots'
+            echo '**Software-rendered emulator (SwiftShader): GPU-driver / hardware bugs cannot show up here.**'
+            echo
+            echo "Contact sheet (paste this raw link in Discord, it unfurls as an image): $base/sheet.png"
+            echo
+            echo "![contact sheet]($base/sheet.png)"
+            echo
+            for f in $(cd pub && ls *.png | sort); do
+              [ "$f" = sheet.png ] || echo "- $base/$f"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

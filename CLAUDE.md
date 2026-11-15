@@ -14,6 +14,10 @@ One reusable workflow, not one repo per question.
 - `tools/patch_spec.py`: stdlib-only `key=value` overrides for a spec (replace in place, else append
   to [app]). Local run: `uv run --no-project tools/patch_spec.py SPEC 'k=v;k2=v2'`.
 - `stub/main.py`: minimal Kivy app the builds compile.
+- `.github/workflows/inspect.yml` + `docs/inspect.md` (READ IT before using or changing inspect): APK static
+  facts + optional x86_64 emulator run (taps, screenshots, our runner's logcat); builds via build.yml
+  (`workflow_call`); screenshots go to the orphan branch `shots`. Helpers: `tools/apk_pkgs.py`,
+  `tools/emu_run.sh`, `tools/contact_sheet.py`. Test app: `stub_kivymd/` (+ its `spec_overrides.txt`).
 
 ## How to run a repro
 Actions tab -> "buildozer repro" -> Run workflow. Or via the API (workflow_dispatch on `build.yml`,
@@ -26,8 +30,9 @@ Read the run's Summary page first (host arch, image digest, pip versions, lines 
 - Every run must record what it ran on (image digest, host arch, pip versions) so logs are comparable.
 - A run does NOT match a reporter's stale `.buildozer` / `~/.buildozer` or rootless podman details;
   say so when reporting results.
-- Inputs are interpolated into shell: fine while only collaborators can dispatch; never add a
-  trigger that untrusted users can fire (pull_request_target, issue_comment, ...).
+- Inputs reach the shell ONLY through `env:` variables (never `${{ inputs.x }}` inside `run:`; since
+  2026-11-14, inputs will come from Discord/Reddit reports); never add a trigger that untrusted users can
+  fire (pull_request_target, issue_comment, ...). `contents: write` only on inspect's `shots` job.
 
 ## Cache protocol (author, 2026-11-12)
 Caches hide bugs (run #1 reproduced a pip bug that lives in the project `.buildozer` build venv;
@@ -45,6 +50,7 @@ Every summary must say which cache level ran and whether it was hit.
     git grep -nIiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|[A-Z]:\\|/Users/|/home/[a-z]|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_' -- . ':!CLAUDE.md'
     git log --all --format='%an <%ae> | %cn <%ce>' | sort -u   # only the GitHub noreply address
 Expected: no hits except `/home/user` (the container's own user) and the noreply author.
+(A local fetch of the `shots` branch also shows the github-actions[bot] noreply address: expected.)
 
 ## Log
 - 2026-11-12: created; run #1 = pip `capture_logging` ImportError repro (kivy only, p4a master, x86).
@@ -64,3 +70,6 @@ Expected: no hits except `/home/user` (the container's own user) and the noreply
     saves skipped, Summary ok. Warm runs: ~4 min total. Cache input verified end to end.
 - 2026-11-12: release request posted upstream: kivy/python-for-android#3411 (cites runs #1, #2, #3, #5 + runs/
   excerpts at commit 50bea6c: keep runs/ files unchanged so the line links stay valid). Related: #3364, #3366.
+- 2026-11-14: inspect.yml added (author-approved spec); build.yml became reusable (workflow_call) with
+  repo/ref/app/add_archs/app_config/apk_cache inputs, all inputs via env. stub_kivymd checked on desktop only.
+  Runs: none yet (no gh CLI on the build machine; dispatch pending).
