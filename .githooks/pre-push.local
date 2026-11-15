@@ -1,0 +1,6 @@
+#!/bin/sh
+# Run by the local privacy guard's pre-push chain (after its private check) with git's ref lines on
+# stdin: the same public check CI runs, but BEFORE the push. Fail closed if uv is missing.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+command -v uv >/dev/null 2>&1 || { echo 'pre-push.local: uv not found - refusing' >&2; exit 1; }
+exec uv run --no-project tools/privacy_check.py --pre-push

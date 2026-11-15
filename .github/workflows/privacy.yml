@@ -1,0 +1,69 @@
+name: privacy check
+
+# Runs tools/privacy_check.py (generic public rules: emails except GitHub noreply, drive / home
+# paths, tokens, private keys, tracked .env) on the pushed tree + the pushed commits' emails/messages.
+# ALARM, NOT A LOCK: it runs AFTER the push is already public. The lock is the local pre-push hook
+# (.githooks/pre-push.local, run by the author's local guard once it is enabled).
+# Pushes made with GITHUB_TOKEN (inspect.yml -> orphan branch `shots`) trigger no workflow, so the
+# workflow_run trigger re-checks every branch after each inspect run. Inputs reach the shell via env only.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_run:
+    workflows: ['inspect apk']
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Privacy check
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -u
+          zero=0000000000000000000000000000000000000000
+          has() { git cat-file -e "$1^{commit}" 2>/dev/null; }
+          args=()
+          case "$EVENT" in
+            push)
+              if [ "$AFTER" = "$zero" ]; then echo 'branch deleted: nothing to scan'; exit 0; fi
+              # new branch (before = zeros, e.g. the orphan `shots`) or a force-push whose old tip is gone:
+              # scan the whole history of the new tip
+              if [ "$BEFORE" != "$zero" ] && has "$BEFORE"; then rng="$BEFORE..$AFTER"; else rng="$AFTER"; fi
+              args=(--tree "$AFTER" --commits "$rng")
+              what="push: tree $AFTER, commits $rng" ;;
+            pull_request)
+              args=(--tree "$PR_HEAD" --commits "$PR_BASE..$PR_HEAD")
+              what="pull_request: tree $PR_HEAD, commits $PR_BASE..$PR_HEAD" ;;
+            *)
+              # every remote branch tip + every commit on any branch (catches `shots`)
+              for b in $(git for-each-ref --format='%(objectname)' refs/remotes/origin); do args+=(--tree "$b"); done
+              args+=('--commits=--remotes')
+              what="$EVENT: all branches" ;;
+          esac
+          rc=0
+          python3 -I tools/privacy_check.py "${args[@]}" > hits.txt 2> stats.txt || rc=$?
+          cat hits.txt stats.txt
+          {
+            echo '## privacy check'
+            echo "Scope: $what"
+            echo
+            echo '> Alarm, not a lock: this runs AFTER the push is public. A hit means the data is already'
+            echo '> on GitHub: rewrite history / rotate the secret, not just a new commit.'
+            echo
+            if [ "$rc" = 0 ]; then echo 'Result: clean'; else echo "Result: FAIL (exit $rc)"; echo '```'; cat hits.txt stats.txt; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
