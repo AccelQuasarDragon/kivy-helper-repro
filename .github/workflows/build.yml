@@ -76,6 +76,7 @@ on:
       command: {type: string, default: 'android debug'}
       cache: {type: string, default: 'off'}
       apk_cache: {type: boolean, default: false}
+      artifact_name: {type: string, default: ''}  # empty = build-<run_number>; matrix.yml sets one per element
     outputs:
       artifact: {value: '${{ jobs.build.outputs.artifact }}'}
       apk_hit: {value: '${{ jobs.build.outputs.apk_hit }}'}
@@ -112,7 +113,7 @@ jobs:
       CACHE: ${{ inputs.cache }}
       APK_CACHE: ${{ inputs.apk_cache }}
     outputs:
-      artifact: build-${{ github.run_number }}
+      artifact: ${{ inputs.artifact_name || format('build-{0}', github.run_number) }}
       apk_hit: ${{ steps.apk_restore.outputs.cache-hit == 'true' }}
       cold: ${{ steps.out.outputs.cold }}
       image_digest: ${{ steps.out.outputs.image_digest }}
@@ -306,7 +307,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-${{ github.run_number }}
+          name: ${{ inputs.artifact_name || format('build-{0}', github.run_number) }}
           path: |
             build.log
             work/buildozer.spec
