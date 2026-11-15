@@ -1,8 +1,10 @@
 name: report card
 
-# Publish ONE multi-run Discord card page (docs/cards.md) from a JSON spec, without a local push:
-# render (tools/card_page.py --spec, read-only job) -> publish (tools/push_shots.sh, the ONLY job here
-# with contents: write) to shots/<slug>/index.html on branch `shots`, served by GitHub Pages.
+# Publish ONE multi-run report from a JSON spec, without a local push, as three views of that spec
+# in shots/<slug>/ on branch `shots` (served by GitHub Pages; docs/cards.md):
+#   index.html (Discord card page), TESTS.md (every run in a table), sheet.png (ONE contact sheet of the runs).
+# render (read-only: the runs' PNGs come from a sparse, credential-less checkout of `shots`) ->
+# publish (tools/push_shots.sh, the ONLY job here with contents: write).
 # workflow_dispatch ONLY (collaborators). Every input reaches the shell through env: variables only.
 on:
   workflow_dispatch:
@@ -11,7 +13,7 @@ on:
         description: 'Run label (what this report is about)'
         default: 'report'
       spec:
-        description: 'Card spec JSON (card_page.py --spec format; "url" is set to the page URL here). Max 20000 chars'
+        description: 'Report spec JSON (card_page.py --spec format, with "runs"; "url" is set here). Max 20000 chars'
         required: true
       slug:
         description: 'Folder under shots/: a-z first, then a-z 0-9 - (1-40 chars); empty = report-<run_id>'
@@ -34,7 +36,9 @@ jobs:
         shell: bash
     outputs:
       slug: ${{ steps.v.outputs.slug }}
-      page: ${{ steps.v.outputs.page }}
+      page: ${{ steps.r.outputs.page }}
+      tests: ${{ steps.r.outputs.tests }}
+      sheet: ${{ steps.r.outputs.sheet }}
       # per attempt; publish reads this name (it may run in a later attempt than render)
       artifact: report-${{ github.run_number }}-a${{ github.run_attempt }}
     steps:
@@ -42,7 +46,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Validate + render
+      - name: Validate
         id: v
         env:
           SPEC: ${{ inputs.spec }}
@@ -54,37 +58,66 @@ jobs:
           # a leading letter: an all-digit slug could replace an inspect run's shots/<run_id>/
           [[ "$slug" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || fail 'slug: a letter, then up to 39 of a-z 0-9 -'
           [ "${#SPEC}" -le 20000 ] || fail "spec is ${#SPEC} chars (max 20000)"
-          owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
-          pages_host="${owner,,}.github.io"
-          page="https://${pages_host}/${name}/shots/$slug/"
-          mkdir -p pub
-          printf '%s' "$SPEC" > spec_in.json
-          # valid JSON object; "url" = this page (the og:url Discord reads), whatever the spec said
-          PAGE="$page" python3 -c '
-          import json, os, sys
-          try:
-              card = json.load(open("spec_in.json", encoding="utf-8"))
-          except ValueError as e:
-              sys.exit(f"spec is not valid JSON: {e}")
-          if not isinstance(card, dict):
-              sys.exit("spec must be a JSON object")
-          card["url"] = os.environ["PAGE"]
-          json.dump(card, open("spec.json", "w", encoding="utf-8"))
-          ' || fail 'spec: not a valid JSON object (see the step log)'
-          # card_page.py escapes every text value and allows only https URLs on its host allowlist
-          err=$(python3 tools/card_page.py pub/index.html --spec spec.json --allow-host "$pages_host" 2>&1) ||
-            fail "card_page: $(printf '%s' "$err" | tail -1 | cut -c1-300)"
-          { echo "slug=$slug"; echo "page=$page"; } >> "$GITHUB_OUTPUT"
+          printf '%s' "$SPEC" > spec.json
+          # shape + size checks (card_page.py validate); prints the runs' ids
+          ids=$(python3 tools/card_page.py --spec spec.json --run-ids 2>&1) ||
+            fail "$(printf '%s' "$ids" | tail -1 | cut -c1-300)"
+          sparse=''
+          for id in $ids; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] || fail 'bad run id'
+            sparse+="shots/$id"$'\n'
+          done
+          { echo "slug=$slug"; echo 'sparse<<SPARSE_EOF'; printf '%s' "$sparse"; echo 'SPARSE_EOF'; } >> "$GITHUB_OUTPUT"
 
-      - name: Upload the page
+      # the listed runs' PNGs only (cone-mode sparse checkout), read-only: no credentials kept
+      - uses: actions/checkout@v4
+        if: steps.v.outputs.sparse != ''
+        with:
+          ref: shots
+          path: shotsrc
+          persist-credentials: false
+          sparse-checkout: ${{ steps.v.outputs.sparse }}
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Render index.html + TESTS.md + sheet.png
+        id: r
+        env:
+          SLUG: ${{ steps.v.outputs.slug }}
+          HAVE_SHOTS: ${{ steps.v.outputs.sparse != '' }}
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          mkdir -p pub
+          shots=(); [ "$HAVE_SHOTS" != true ] || shots=(--shots-root shotsrc --sheet-manifest manifest.json)
+          # card_page.py escapes every text value (HTML / markdown) and allows only https URLs on its allowlist
+          err=$(python3 tools/card_page.py pub/index.html --spec spec.json --repo "$GITHUB_REPOSITORY" \
+                --slug "$SLUG" --md pub/TESTS.md "${shots[@]}" 2>&1) ||
+            fail "$(printf '%s' "$err" | tail -1 | cut -c1-300)"
+          echo "$err"
+          sheet=false
+          if [ -f manifest.json ] && [ "$(python3 -c 'import json; print(len(json.load(open("manifest.json"))))')" != 0 ]; then
+            # <= 8 MB (Discord + Pages friendly): tiles shrink until it fits (tools/contact_sheet.py)
+            uv run --script tools/contact_sheet.py pub/sheet.png --groups manifest.json --max-bytes 8000000 ||
+              fail 'contact sheet failed (see the step log)'
+            sheet=true
+          fi
+          owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
+          pages="https://${owner,,}.github.io/${name}/shots/$SLUG"
+          {
+            echo "page=$pages/"
+            echo "tests=https://github.com/${GITHUB_REPOSITORY}/blob/shots/shots/$SLUG/TESTS.md"
+            [ "$sheet" != true ] || echo "sheet=$pages/sheet.png"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload the report
         uses: actions/upload-artifact@v4
         with:
           name: report-${{ github.run_number }}-a${{ github.run_attempt }}
-          path: pub/index.html
+          path: pub/
           retention-days: 14
           if-no-files-found: error
 
-  # The ONLY job with write access: pushes shots/<slug>/index.html (tools/push_shots.sh, shared
+  # The ONLY job with write access: pushes shots/<slug>/ (index.html, TESTS.md, sheet.png) (tools/push_shots.sh, shared
   # with inspect.yml's shots job: fresh fetch + commit + push, jittered retries, never concurrency-cancelled).
   publish:
     needs: render
@@ -115,14 +148,19 @@ jobs:
           [ "$rc" != 3 ] || echo "**NOT PUBLISHED:** shots/$SLUG/ already exists; re-run with overwrite or another slug" >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
-      - name: Summary (page URL)
+      - name: Summary (URLs)
         env:
           PAGE: ${{ needs.render.outputs.page }}
+          TESTS: ${{ needs.render.outputs.tests }}
+          SHEET: ${{ needs.render.outputs.sheet }}
         run: |
-          echo "report card page: $PAGE"
+          echo "report card page: $PAGE"; echo "TESTS.md: $TESTS"; echo "sheet: ${SHEET:-none}"
           {
             echo '## report card'
             echo "Discord card page (post this URL bare): $PAGE"
+            echo
+            echo "TESTS.md (every run in a table): $TESTS"
+            [ -z "$SHEET" ] || { echo; echo "Contact sheet of all runs: $SHEET"; }
             echo
             echo "(Pages deploys ~1+ minute after the push: open the URL in a browser first and post it only once it loads; posted too early, Discord caches an empty embed: post it again with \`?1\` appended. docs/cards.md)"
           } >> "$GITHUB_STEP_SUMMARY"
