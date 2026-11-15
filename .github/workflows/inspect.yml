@@ -223,7 +223,29 @@ jobs:
           if [ "$COLD" = 'true' ]; then verdict='**COLD RUN (nothing restored from any cache): counts as evidence**';
           elif [ "$COLD" = 'n/a' ]; then verdict='no build (apk_url): the APK itself is the input';
           else verdict='**WARM RUN (a cache was restored): not evidence (CLAUDE.md)**'; fi
+          # App state at the end, as the FIRST summary line: a green workflow must not hide a dead app.
+          state=''
+          if [ "$STATIC_ONLY" != 'true' ]; then
+            [ ! -f "$OUT/logcat.txt" ] || tr -d '\r' < "$OUT/logcat.txt" > "$OUT/logcat_clean.txt"
+            pid=$(rd pid_at_end.txt)
+            if [ "$pid" = 'none' ]; then
+              state='**APP DIED: FAIL** (no app pid at the end)'
+              # first exception line of the first Python traceback (logcat tag python)
+              tb=$(grep -nE ' python *: Traceback' "$OUT/logcat_clean.txt" 2>/dev/null | head -1 | cut -d: -f1 || true)
+              if [ -n "$tb" ]; then
+                exc=$(sed -n "${tb},\$p" "$OUT/logcat_clean.txt" | grep -E ' python *: ' | sed -E 's/^.* python *: //' |
+                      grep -m1 -E '^ *[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(:|$)' | cut -c1-200 || true)
+                [ -z "$exc" ] || state="$state: \`$exc\`"
+              fi
+            elif [ "$pid" = 'n/a' ]; then
+              state='**APP STATE UNKNOWN** (no pid_at_end.txt: the emulator run did not finish)'
+            else
+              state="**APP ALIVE at end** (pid $pid)"
+            fi
+            echo "app state: $state"
+          fi
           {
+            [ -z "$state" ] || { echo "$state"; echo; }
             echo "## inspect: $LABEL"
             echo
             echo '> **The emulator renders in SOFTWARE (SwiftShader), not on a real GPU (e.g. Adreno / Mali). GPU-driver and hardware bugs CANNOT show up here: a clean run here does not clear them.**'
@@ -255,7 +277,6 @@ jobs:
               [ -f "$OUT/errors.txt" ] && { echo '- driver errors:'; echo '```'; cat "$OUT/errors.txt"; echo '```'; }
               echo "- screenshots: $(ls "$OUT"/*.png 2>/dev/null | wc -l) (sheet + raw links: the shots job summary below)"
               if [ -f "$OUT/logcat.txt" ]; then
-                tr -d '\r' < "$OUT/logcat.txt" > "$OUT/logcat_clean.txt"
                 echo '#### logcat: Python tracebacks / errors / FATAL (first 40 hits)'
                 echo '```'
                 grep -nE 'Traceback|python *: .*(Error|Exception)|FATAL|Fatal signal|AndroidRuntime: |SIGSEGV' "$OUT/logcat_clean.txt" | cut -c1-300 | head -40 || true

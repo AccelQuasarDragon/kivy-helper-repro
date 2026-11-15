@@ -98,8 +98,12 @@ Example dispatch for the first goal (edge-to-edge check):
 label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`, cache `off`.
 
 ## How to read results
-1. Summary of the `inspect` job first: the bold GPU line, static facts (targetSdk >= 35 = Android
-   15+ enforces edge-to-edge for this APK), logcat hits, `app pid at end` (none = the app died).
+1. Summary of the `inspect` job first. Its FIRST line (emulator runs) is the app state:
+   `**APP DIED: FAIL**` (no app pid at the end; plus the first Python traceback's exception line
+   when logcat has one), `**APP ALIVE at end**`, or `**APP STATE UNKNOWN**` (the emulator run did
+   not finish). The workflow stays green when the app dies: read this line, not the check mark.
+   Then the bold GPU line, static facts (targetSdk >= 35 = Android 15+ enforces edge-to-edge for
+   this APK), logcat hits.
 2. The `shots` job summary: the contact sheet. Edge-to-edge overlap = app content (e.g. the top
    app bar) drawn under the status bar / navigation bar.
 3. Evidence rule (CLAUDE.md cache protocol): only a COLD run is evidence. COLD = NO cache restored
