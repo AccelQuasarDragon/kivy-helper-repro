@@ -25,7 +25,7 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.
 
-Artifacts (14 days): `build-<n>` (build.log, spec, APK) and `inspect-<n>` (PNGs, logcat, badging,
+Artifacts (14 days): `build-<n>` (build.log, spec, APK; `build-<n>-<name>` when built by matrix.yml) and `inspect-<n>` (PNGs, logcat, badging,
 python_packages.md, install/launch output).
 
 ## Inputs
@@ -57,9 +57,12 @@ the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs ->
   an elevated MDCard holding a nested elevated MDCard and an elevated MDButton. Tapping the big card
   (screen center: `540,1200` on pixel_6) or the button goes to the next screen. Prints
   `STUB config {...}` and `STUB screen <name>` to stdout = logcat tag `python`, so the summary
-  shows whether each tap switched screens. Config (later wins): `DEFAULTS` in main.py
-  `{"shadows": true, "transition": "Slide", "count": true, "insets": false, "autotest": 0}` ->
-  `app_config.json` (input `app_config`) -> env `STUB_<KEY>` (desktop, e.g. `STUB_SHADOWS=0`).
+  shows whether each tap switched screens. Files: `main.py` (dispatcher: `variant` 0 = this app,
+  `showcase.py`; 1..5 = the Q-B bisect ladder, `bisect_app.py`, see docs/bisect.md), `stubkit.py`
+  (kivymd-free helpers + config). Config (later wins): `DEFAULTS` in stubkit.py
+  `{"shadows": true, "transition": "Slide", "count": true, "insets": false, "autotest": 0,
+  "variant": 0, "ui": "", "extra": "", "switches": 20}` -> `app_config.json` (input `app_config`)
+  -> env `STUB_<KEY>` (desktop, e.g. `STUB_SHADOWS=0`).
   - `transition`: a Kivy screenmanager name (`Slide`, `Fade`, `No`, ...) or a KivyMD one (`MDSlide`,
     `MDFadeSlide`, `MDSharedAxis`), applied one frame after build and printed as
     `STUB transition <class>`. (Before 2026-11-15 it was set in build() and MDScreenManager's
@@ -70,8 +73,9 @@ the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs ->
     widget, even at alpha 0 / elevation 0) creates none. (The old class-level `shadow_color`
     hack removed no BoxShadow.)
   - `count`: after start and after each switch (on_enter):
-    `STUB count screen=<name> boxshadow=<n> fbo_boxshadow=<n> fbo_transition=<n> elevated=<n>`
-    (current screen's tree; `fbo_transition` = cumulative Fbos made by Kivy shader transitions).
+    `STUB count screen=<name> boxshadow=<n> fbo_boxshadow=<n> fbo_transition=<n> elevated=<n> fbo=<n>`
+    (current screen's tree; `fbo_transition` = cumulative Fbos made by Kivy shader transitions;
+    `fbo` = every Fbo instruction in the tree, BoxShadow's included; `fbo=` added 2026-11-15).
   - `insets: true` (Android): pads the root by the system bar insets read via pyjnius
     (`getRootWindowInsets`, API 30+ `systemBars()`), at the first frame and again 1 s later;
     prints `STUB insets top= bottom= left= right= applied=<bool>` (desktop: applied=False).
