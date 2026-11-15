@@ -62,8 +62,12 @@ on:
         options: ['off', 'sdk', 'full']
         default: 'off'
       image:
-        description: 'Buildozer container image'
-        default: 'ghcr.io/kivy/buildozer:latest'
+        description: 'Buildozer container image (empty = build.yml''s default)'
+        default: ''
+      fail_on_death:
+        description: 'Fail the inspect job at the end (after artifacts + shots data) when the app died or did not install'
+        type: boolean
+        default: false
 
 run-name: '${{ inputs.label }} | inspect | ${{ inputs.apk_url != '''' && ''apk_url'' || inputs.artifact_run != '''' && format(''artifact {0}'', inputs.artifact_name) || (inputs.repo || inputs.app || ''stub_kivymd'') }} | api ${{ inputs.api_level }} | cache ${{ inputs.cache }}'
 
@@ -122,7 +126,7 @@ jobs:
             for v in REPO APP ARCHS EXTRA APP_CONFIG; do [ -z "${!v}" ] || set_build="$set_build ${v,,}"; done
             [ "$REF" = 'HEAD' ] || [ -z "$REF" ] || set_build="$set_build ref"
             # no build = no image and no cache: a non-default value would be claimed in the run name / summary
-            [ "$IMAGE" = 'ghcr.io/kivy/buildozer:latest' ] || [ -z "$IMAGE" ] || set_build="$set_build image"
+            [ -z "$IMAGE" ] || set_build="$set_build image"
             [ "$CACHE" = 'off' ] || [ -z "$CACHE" ] || set_build="$set_build cache"
             [ -z "$set_build" ] || fail "$source is set (= no build): leave the build inputs empty / default:$set_build"
           fi
@@ -178,7 +182,7 @@ jobs:
           ARTIFACT_RUN: ${{ needs.check.outputs.artifact_run }}
           ARTIFACT_NAME: ${{ needs.check.outputs.artifact_name }}
         run: |
-          msg="could not download artifact $ARTIFACT_NAME of run $ARTIFACT_RUN: artifact_run must be the run ID (the long number in the run URL), not the run number; artifacts expire after 14 days; the artifact name must match build-<run_number>-<name>-a<attempt>"
+          msg="could not download artifact $ARTIFACT_NAME of run $ARTIFACT_RUN: artifact_run must be the run ID (the long number in the run URL), not the run number; artifacts expire after 14 days; the artifact name must match build-<run_number> (a build.yml / inspect build) or build-<run_number>-<name>-a<attempt> (matrix.yml)"
           echo "::error::$msg"
           echo "**FETCH FAILED:** $msg" >> "$GITHUB_STEP_SUMMARY"
 
@@ -244,6 +248,8 @@ jobs:
       target_sdk: ${{ steps.res.outputs.target_sdk }}
       cold: ${{ steps.res.outputs.cold }}
       source: ${{ steps.res.outputs.source }}
+      # per attempt, so a re-run never clashes; the shots job reads this name (it may run in a later attempt)
+      artifact: inspect-${{ github.run_number }}-a${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
 
@@ -355,7 +361,9 @@ jobs:
             elif [ "$pid" = 'n/a' ]; then
               state='**APP STATE UNKNOWN** (no pid_at_end.txt: the emulator run did not finish)'
             else
-              state="**APP ALIVE at end** (pid $pid)"
+              state="**APP OK** (alive at end, pid $pid)"
+              ntb=$(grep -cE ' python *: Traceback' "$OUT/logcat_clean.txt" 2>/dev/null || true)
+              [ "${ntb:-0}" = 0 ] || state="$state, but $ntb Python traceback(s) in logcat: read them below"
             fi
             echo "app state: $state"
           fi
@@ -365,9 +373,20 @@ jobs:
             *'APP DIED'*) short='APP DIED' ;;
             *'APP NOT INSTALLED'*) short='APP NOT INSTALLED' ;;
             *'ADB LOST DEVICE'*) short='ADB LOST DEVICE' ;;
-            *'APP ALIVE'*) short='APP ALIVE' ;;
+            *'APP OK'*) short='APP OK' ;;
             *) short='APP STATE UNKNOWN' ;;
           esac
+          # the verdict as a run ANNOTATION too: annotations sit at the very top of the run page,
+          # above every job summary (build.yml's included). One line, workflow-command escaped.
+          if [ -n "$state" ]; then
+            msg=$(printf '%s' "$state" | tr -d '\r\n*`' | sed 's/%/%25/g' | cut -c1-300)
+            case "$short" in
+              'APP OK') echo "::notice title=$short::$msg" ;;
+              'APP DIED'|'APP NOT INSTALLED') echo "::error title=$short (workflow stays green unless fail_on_death)::$msg" ;;
+              *) echo "::warning title=$short::$msg" ;;
+            esac
+          fi
+          case "$short" in 'APP DIED'|'APP NOT INSTALLED') echo 'dead=true' >> "$GITHUB_OUTPUT" ;; *) echo 'dead=false' >> "$GITHUB_OUTPUT" ;; esac
           case "$COLD" in true) cold='COLD run' ;; n/a) cold='APK input (no build)' ;; *) cold='WARM run' ;; esac
           sdk="${TARGET_SDK:-}"; [[ "$sdk" =~ ^[0-9]{1,3}$ ]] || sdk='?'
           # source for the card: validated inputs only (run ID digits, artifact name charset)
@@ -408,6 +427,10 @@ jobs:
               echo "- emulator image: \`system-images;android-$API_LEVEL;google_apis;x86_64\`, fingerprint \`$(rd device_fingerprint.txt)\`, screen \`$(rd wm_size.txt)\`"
               echo "- attempts: 1 = \`$EMU1\`, 2 = \`${EMU2:-skipped}\`"
               echo "- install: \`$(rd install.txt | tail -1)\`; app pid at end: \`$(rd pid_at_end.txt)\` (none = not running = crashed or exited)"
+              if [ -s "$OUT/system_dialogs.txt" ]; then
+                echo "- system dialogs (other apps' ANR / crash, dismissed before launch / shots / taps; tools/emu_run.sh):"
+                echo '```'; cut -c1-200 "$OUT/system_dialogs.txt" | head -20; echo '```'
+              fi
               [ -f "$OUT/errors.txt" ] && { echo '- driver errors:'; echo '```'; cat "$OUT/errors.txt"; echo '```'; }
               echo "- screenshots: $(ls "$OUT"/*.png 2>/dev/null | wc -l) (sheet + raw links: the shots job summary below)"
               if [ -f "$OUT/logcat.txt" ]; then
@@ -436,10 +459,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: inspect-${{ github.run_number }}
+          name: inspect-${{ github.run_number }}-a${{ github.run_attempt }}
           path: out/
           retention-days: 14
           if-no-files-found: ignore
+
+      # LAST step (artifact uploaded; the job outputs the shots job needs are already set)
+      - name: Fail on app death (fail_on_death)
+        if: always() && inputs.fail_on_death && steps.res.outputs.dead == 'true'
+        env:
+          APP_STATE: ${{ steps.res.outputs.app_state }}
+        run: |
+          echo "::error::fail_on_death: $APP_STATE (screenshots + card are still published by the shots job)"
+          exit 1
 
   # The ONLY job with write access: it pushes the PNGs to the orphan branch `shots`.
   shots:
@@ -458,7 +490,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: inspect-${{ github.run_number }}
+          name: ${{ needs.inspect.outputs.artifact }}
           path: out
 
       - uses: astral-sh/setup-uv@v6
@@ -498,37 +530,13 @@ jobs:
             --link="run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" --link="raw contact sheet=$raw/sheet.png" "${src_link[@]}"
           echo "PAGE_URL=$page" >> "$GITHUB_ENV"
 
+      # tools/push_shots.sh (shared with report.yml): fresh fetch + commit + push, 10 jittered retries.
+      # No `concurrency:` group: GitHub keeps one pending job per group and cancels older pending ones.
       - name: Push to branch shots (shots/<run_id>/)
         env:
           TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
-        run: |
-          url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git init -q shotsrepo
-          cd shotsrepo
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git remote add origin "$url"
-          if git ls-remote --exit-code origin refs/heads/shots >/dev/null 2>&1; then
-            git fetch -q --depth 1 origin shots
-            git checkout -q -b shots FETCH_HEAD
-          else
-            git checkout -q --orphan shots
-            printf '# shots\nScreenshots pushed by inspect.yml runs (shots/<run_id>/). Orphan branch: no code.\n' > README.md
-            git add README.md
-          fi
-          # Pages serves the branch as-is (no Jekyll build) when .nojekyll exists at its root
-          [ -f .nojekyll ] || { : > .nojekyll; git add .nojekyll; }
-          mkdir -p "shots/$RUN_ID"
-          cp ../pub/*.png "shots/$RUN_ID/"
-          [ ! -f ../pub/index.html ] || cp ../pub/index.html "shots/$RUN_ID/"
-          git add "shots/$RUN_ID"
-          git commit -q -m "shots for run $RUN_ID"
-          for _ in 1 2 3; do
-            git push -q origin HEAD:shots && exit 0
-            git fetch -q --depth 1 origin shots && git rebase -q FETCH_HEAD || true
-          done
-          echo '::error::push to shots failed'; exit 1
+        run: bash tools/push_shots.sh pub "$RUN_ID" overwrite
 
       - name: Summary (screenshot URLs)
         env:

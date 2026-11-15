@@ -61,7 +61,8 @@ label `Q-B bisect kit`, builds = this JSON (regenerate: `uv run --no-project stu
 Everything else comes from `stub_kivymd/spec_overrides.txt`: p4a develop, android.ndk 29, archs
 arm64-v8a, Kivy 2.3.2, KivyMD master, `materialyoucolor==3.0.4` (p4a develop's recipe ships 2.0.10,
 which lacks `dynamiccolor.color_spec` that KivyMD master imports; `name==ver` makes p4a fetch the
-v3.0.4 release tarball). `extra` raises android.api to 36 (the reporter's). `"add_archs":"x86_64"`
+v3.0.4 release tarball), `materialshapes` + `pycairo` (the first touch imports them via
+kivymd.uix.list -> fitimage; since 2026-11-15 push 2). `extra` raises android.api to 36 (the reporter's). `"add_archs":"x86_64"`
 makes each APK FAT (arm64-v8a + x86_64): ONE file per variant serves both the x86_64 emulator gate
 (section 2, no rebuild) and the arm64 phone (Android picks the arm64 lib on the device). Cache `off`
 (cold, the only evidence). Artifacts `build-<run_number>-bisect1..5-a<attempt>` hold the debug APKs;

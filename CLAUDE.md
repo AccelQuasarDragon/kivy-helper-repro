@@ -35,7 +35,7 @@ Read the run's Summary page first (host arch, image digest, pip versions, lines 
   say so when reporting results.
 - Inputs reach the shell ONLY through `env:` variables (never `${{ inputs.x }}` inside `run:`; since
   2026-11-14, inputs will come from Discord/Reddit reports); never add a trigger that untrusted users can
-  fire (pull_request_target, issue_comment, ...). `contents: write` only on inspect's `shots` job.
+  fire (pull_request_target, issue_comment, ...). `contents: write` only on inspect's `shots` job and report.yml's `publish` job.
 
 ## Cache protocol (author, 2026-11-12)
 Caches hide bugs (run #1 reproduced a pip bug that lives in the project `.buildozer` build venv;

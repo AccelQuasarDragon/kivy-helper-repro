@@ -27,6 +27,13 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    launches, waits `launch_wait` s, then runs `taps`, with a `screencap` PNG after launch and after
    each tap, and saves the emulator's own logcat. The emulator step retries once if it fails
    (the action has no retry input; the script itself always exits 0, so a failure = the emulator).
+   Before install it SETTLES (bounded): `sys.boot_completed`, the launcher focused (<= 60 s each),
+   then 10 s idle (env `SETTLE`). Before launch, before the launch shot and before EACH tap it
+   dismisses OTHER apps' ANR / crash dialogs (found in `dumpsys window windows`; a "Pixel Launcher
+   isn't responding" dialog covered the launch shot and ate the first tap in 2 of 7 Q-A runs and 3
+   of 5 gate runs): `am broadcast CLOSE_SYSTEM_DIALOGS`, else a tap on the dialog's `Wait` /
+   `Close app` button (uiautomator), else BACK (only when that dialog has focus). The app's OWN ANR / crash dialog is left open (a
+   result). Everything found and how it went: `system_dialogs.txt` (+ the summary).
 4. **Screenshots without clicking**: the `shots` job (the ONLY job with `contents: write`) makes one
    contact sheet (`tools/contact_sheet.py`, Pillow via uv) and pushes it plus every PNG to the
    orphan branch `shots` under `shots/<run_id>/`. Its summary prints the raw URLs
@@ -39,8 +46,9 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.
 
-Artifacts (14 days): `build-<n>` (build.log, spec, APK; `build-<n>-<name>-a<attempt>` when built by matrix.yml) and `inspect-<n>` (PNGs, logcat, badging,
-python_packages.md, install/launch output).
+Artifacts (14 days): `build-<n>` (build.log, spec, APK; `build-<n>-<name>-a<attempt>` when built by matrix.yml) and `inspect-<n>-a<attempt>` (PNGs, logcat, badging,
+python_packages.md, install/launch output, system_dialogs.txt; plain `inspect-<n>` before 2026-11-15 push 2).
+The shots job downloads the name the inspect job outputs, so a re-run in a later attempt still finds it.
 
 ## Inputs
 | input | meaning |
@@ -60,7 +68,8 @@ python_packages.md, install/launch output).
 | taps | `x,y[,wait_s]` steps separated by `;` (wait default 5 s) |
 | launch_wait | seconds before the first screenshot (default 30; first start unpacks the app) |
 | cache | `off` (cold) / `sdk` / `full`, as in build.yml, plus the built-APK cache when not `off` |
-| image | buildozer container image |
+| image | buildozer container image (empty = build.yml's default, `ghcr.io/kivy/buildozer:latest`) |
+| fail_on_death | true = the inspect job FAILS at its last step (after the artifact upload; the shots job still publishes) when the verdict is `APP DIED` or `APP NOT INSTALLED`; default false (stays green) |
 
 Spec layering in a build (build.yml): the app's own `buildozer.spec`, else `buildozer init` ->
 the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs -> `extra` ->
@@ -77,7 +86,7 @@ the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs ->
   `showcase.py`; 1..5 = the Q-B bisect ladder, `bisect_app.py`, see docs/bisect.md), `stubkit.py`
   (kivymd-free helpers + config). Config (later wins): `DEFAULTS` in stubkit.py
   `{"shadows": true, "transition": "Slide", "count": true, "insets": false, "autotest": 0,
-  "variant": 0, "ui": "", "extra": "", "switches": 20}` -> `app_config.json` (input `app_config`)
+  "autotest_touch": false, "variant": 0, "ui": "", "extra": "", "switches": 20}` -> `app_config.json` (input `app_config`)
   -> env `STUB_<KEY>` (desktop, e.g. `STUB_SHADOWS=0`).
   - `transition`: a Kivy screenmanager name (`Slide`, `Fade`, `No`, ...) or a KivyMD one (`MDSlide`,
     `MDFadeSlide`, `MDSharedAxis`), applied one frame after build and printed as
@@ -92,13 +101,21 @@ the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs ->
     `STUB count screen=<name> boxshadow=<n> fbo_boxshadow=<n> fbo_transition=<n> elevated=<n> fbo=<n>`
     (current screen's tree; `fbo_transition` = cumulative Fbos made by Kivy shader transitions;
     `fbo` = every Fbo instruction in the tree, BoxShadow's included; `fbo=` added 2026-11-15).
-  - `insets: true` (Android): pads the root by the system bar insets read via pyjnius
-    (`getRootWindowInsets`, API 30+ `systemBars()`), at the first frame and again 1 s later;
-    prints `STUB insets top= bottom= left= right= applied=<bool>` (desktop: applied=False).
+  - insets: the system bar insets are ALWAYS read via pyjnius (`getRootWindowInsets`, API 30+
+    `systemBars()`) at the first frame and again 1 s later and printed as
+    `STUB insets top= bottom= left= right= applied=<bool>` (px; `n/a` = not readable, e.g. desktop),
+    so the overlap has a logged number in every run. `insets: true` also PADS the root by them
+    (`applied=True`). (Before 2026-11-15 push 2, `insets: false` skipped the read and printed 0.)
   - `autotest: N`: N automatic switches 1.5 s apart, then the app stops (desktop checks).
+    `autotest_touch: true` switches through the REAL input path instead of code: the mouse moves
+    onto the big card (KivyMD hover) and a touch down/up goes through the EventLoop
+    (`STUB tap x= y= screen=`). Desktop check (2026-11-15): with `materialshapes` uninstalled, code
+    switches pass and the first touch dies with the Android traceback (card -> kivymd.uix.list ->
+    fitimage -> materialshapes); with it installed, 3 touch switches pass.
   - Always: `STUB gl vendor=... renderer=... version=...` at start (the GPU line for logcat).
-  `materialshapes` (needs pycairo) is not in the requirements: only kivymd's fitimage /
-  loadingindicator import it.
+  Requirements include `materialshapes` + `pycairo` (since 2026-11-15 push 2): kivymd's fitimage /
+  loadingindicator import it, and the FIRST TOUCH reaches fitimage (MDCard hover / state layer ->
+  `kivymd.uix.list` -> fitimage), so without them every tap killed the app (7 cold inspect runs, 2026-11-15).
   Edge-to-edge OPT-OUT (off by default): input `extra` = `android.add_resources=android_res`.
   It adds `stub_kivymd/android_res/values-v35/styles.xml`, which redefines `KivySupportCutout`
   (p4a develop's manifest hard-codes it as the ACTIVITY theme, so `android.apptheme` alone does
@@ -117,10 +134,14 @@ label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`,
 1. Summary of the `inspect` job first. Its FIRST line (emulator runs) is the app state:
    `**APP DIED: FAIL**` (no app pid at the end; plus the first Python traceback's exception line
    when logcat has one), `**APP NOT INSTALLED: FAIL**` (adb install failed; its last line shown),
-   `**ADB LOST DEVICE: UNKNOWN**` (adb no longer saw the emulator), `**APP ALIVE at end**`, or
+   `**ADB LOST DEVICE: UNKNOWN**` (adb no longer saw the emulator), `**APP OK**` (alive at the end;
+   `, but N Python traceback(s) in logcat` when there were any), or
    `**APP STATE UNKNOWN**` (no pid_at_end.txt: the emulator run did not finish). `tools/emu_run.sh`
    writes these states to `pid_at_end.txt`. On the emulator retry (attempt 2), attempt 1's files
-   are moved to `out/prev_attempt_1/` first, so the summary reports only the last attempt. The workflow stays green when the app dies: read this line, not the check mark.
+   are moved to `out/prev_attempt_1/` first, so the summary reports only the last attempt. The workflow stays green when the app dies
+   (unless `fail_on_death`): read this line, not the check mark. The same verdict is a run
+   ANNOTATION (error for APP DIED / NOT INSTALLED, notice for APP OK), shown at the very top of
+   the run page above every job summary, and its word is in the card description.
    Then the bold GPU line, static facts (targetSdk >= 35 = Android 15+ enforces edge-to-edge for
    this APK), logcat hits.
 2. The `shots` job summary: the contact sheet. Edge-to-edge overlap = app content (e.g. the top
@@ -157,7 +178,8 @@ never put reporter names in labels, commits or docs. Screenshots land in a publi
 - Every input reaches the shell via `env:` (never `${{ inputs.x }}` inside `run:`); the `check`
   job validates apk_url (one https URL), artifact_run (digits), artifact_name (strict charset),
   api_level, profile, launch_wait, taps before any build.
-- `contents: write` only on the `shots` job; the push uses the run's own `GITHUB_TOKEN`.
+- `contents: write` only on the `shots` job; the push uses the run's own `GITHUB_TOKEN`
+  (`tools/push_shots.sh`, shared with report.yml's `publish` job).
   `actions: read` only on the `fetch` job (artifact source), pinned to `github.repository`.
 
 ## Design decisions (dated)

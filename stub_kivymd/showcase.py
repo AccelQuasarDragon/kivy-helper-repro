@@ -8,15 +8,21 @@ Keys:
   shadows     False = Factory's BoxShadow is replaced by a no-op group BEFORE any KV builds an
               elevated widget, so no BoxShadow (and no BoxShadow Fbo) exists at all.
   count       print a `STUB count ...` line after start and after each screen switch.
-  insets      Android: pad the root by the system bar insets (pyjnius); desktop: no-op.
+  insets      Android: pad the root by the system bar insets (pyjnius); desktop: no-op. The insets are
+              READ and logged always (a number for the overlap); this key only decides the padding.
   autotest    N > 0 = switch screens N times automatically (1.5 s apart), then stop the app.
+  autotest_touch  False = autotest switches by code; True = through the REAL input path: the mouse
+              moves onto the big card (KivyMD hover) and a touch down/up goes through the EventLoop,
+              like a tap on a phone (catches what only a touch imports, e.g. kivymd.uix.list).
 
 Every config, screen change and measurement is printed as a `STUB ...` line, so it lands in logcat.
 Tapping the center of the screen (the big card) goes to the next screen.
 """
 import json
 
+from kivy.base import EventLoop
 from kivy.clock import Clock
+from kivy.input.motionevent import MotionEvent
 from kivy.lang import Builder
 from kivy.uix import screenmanager
 from kivy.uix.boxlayout import BoxLayout
@@ -34,6 +40,19 @@ def make_transition(name: str):
         if cls is not None:
             return cls()
     raise ValueError(f'unknown transition {name!r}')
+
+
+class TapEvent(MotionEvent):
+    """A synthetic touch at window coords (x, y), dispatched through the EventLoop like a real one."""
+
+    def __init__(self, x, y):
+        win = EventLoop.window
+        super().__init__('stubtap', 1, {'x': x / (win.width - 1.0), 'y': y / (win.height - 1.0)},
+                         is_touch=True, type_id='touch')
+
+    def depack(self, args):
+        self.sx, self.sy = args['x'], args['y']
+        super().depack(args)
 
 
 KV = '''
@@ -131,8 +150,7 @@ class StubKivyMDApp(MDApp):
             screen.bind(on_enter=lambda s: self.count())
         self.count()
         self.apply_insets()
-        if self.cfg['insets']:
-            Clock.schedule_once(lambda dt: self.apply_insets(), 1.0)  # again once fully attached
+        Clock.schedule_once(lambda dt: self.apply_insets(), 1.0)  # again once fully attached
         if self.cfg['autotest'] > 0:
             self.autotest_left = self.cfg['autotest']
             Clock.schedule_once(self.autotest_step, 1.5)
@@ -143,9 +161,10 @@ class StubKivyMDApp(MDApp):
         print(count_line(self.sm.current, self.sm.current_screen))
 
     def apply_insets(self) -> None:
-        ins = read_insets() if self.cfg['insets'] else None
-        applied = ins is not None
-        top, bottom, left, right = ins or (0, 0, 0, 0)
+        # always READ (the logged numbers measure the overlap even with padding off); PAD only when `insets`
+        ins = read_insets()
+        top, bottom, left, right = ins if ins is not None else ('n/a',) * 4
+        applied = bool(self.cfg['insets']) and ins is not None
         if applied:
             self.root.padding = [left, top, right, bottom]  # Kivy padding = left, top, right, bottom
         print(f'STUB insets top={top} bottom={bottom} left={left} right={right} applied={applied}')
@@ -156,8 +175,23 @@ class StubKivyMDApp(MDApp):
             self.stop()
             return
         self.autotest_left -= 1
-        self.go(self.sm.get_screen(self.sm.current).next_name)
+        if self.cfg.get('autotest_touch'):
+            self.tap_card()
+        else:
+            self.go(self.sm.get_screen(self.sm.current).next_name)
         Clock.schedule_once(self.autotest_step, 1.5)
+
+    def tap_card(self) -> None:
+        """Hover + tap the big card (upper part: the center may be the nested card) via the real input path."""
+        from kivy.core.window import Window
+        from kivymd.uix.card import MDCard
+        card = next(w for w in self.sm.current_screen.walk(restrict=True) if isinstance(w, MDCard))
+        x, y = card.to_window(card.center_x, card.y + card.height * 0.85)
+        print(f'STUB tap x={int(x)} y={int(y)} screen={self.sm.current}')
+        Window.mouse_pos = (x, y)  # KivyMD HoverBehavior binds Window.mouse_pos
+        touch = TapEvent(x, y)
+        EventLoop._dispatch_input('begin', touch)
+        Clock.schedule_once(lambda dt: EventLoop._dispatch_input('end', touch), 0.1)
 
     def go(self, name: str) -> None:
         self.sm.current = name

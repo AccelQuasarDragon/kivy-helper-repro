@@ -21,7 +21,7 @@ inspect.yml's `shots` job writes `shots/<run_id>/index.html` next to the PNGs. T
 the inspect job, never log text:
 - source: `COLD run` (built, nothing restored from a cache), `WARM run` (built, a cache hit), or
   `APK input (no build)` (the APK came from `apk_url` or another run's artifact);
-- app state: `APP ALIVE`, `APP DIED`, `APP NOT INSTALLED`, `ADB LOST DEVICE`, `APP STATE UNKNOWN`,
+- app state: `APP OK` (alive at the end), `APP DIED`, `APP NOT INSTALLED`, `ADB LOST DEVICE`, `APP STATE UNKNOWN`,
   or `static only` (`static_only` run: no emulator);
 - N = targetSdk from aapt2 (`?` when unreadable);
 - a non-built APK adds a last piece: ` · from apk_url`, or ` · from run <id> artifact <name>`
@@ -52,20 +52,24 @@ URL pattern: `https://accelquasardragon.github.io/kivy-helper-repro/shots/<run_i
 Pages publishes only what the public `shots` branch already holds (PNGs + this page). Still: look at
 the screenshots before sharing, and never put a reporter's name in a `label` (it becomes the title).
 
-## Report cards (not automated: needs the author's decision)
-A report diagnosing several issues ends with one embed linking every run. The generator supports it:
+## Report cards: report.yml
+A report diagnosing several issues ends with one embed linking every run. Actions tab -> "report card"
+-> Run workflow (workflow_dispatch only):
+- `label`: the run name;
+- `spec`: the card JSON (max 20000 chars): `{"title", "description", "sections": [{"heading", "text",
+  "image", "page", "images", "links": [[text, url]]}, ...]}`, one section per run (`text` = that run's
+  one-liner, `image` = its `sheet.png` raw URL, `page` = its run card). `url` is set by the workflow to
+  the report's own page; every other URL must pass card_page.py's allowlist (https on
+  `raw.githubusercontent.com`, `github.com` or this repo's Pages host);
+- `slug`: the folder, `shots/<slug>/` (a letter, then `a-z 0-9 -`, 1-40 chars, so it never matches an
+  inspect run's all-digit `shots/<run_id>/`; empty = `report-<run_id>`);
+- `overwrite`: false (default) refuses an existing `shots/<slug>/` (the run fails with "NOT PUBLISHED").
 
-    uv run --no-project tools/card_page.py index.html --spec report.json
-
-`report.json`: `{"title", "description", "url", "sections": [{"heading", "text", "image", "page",
-"images", "links": [[text, url]]}, ...]}`, one section per run (`text` = that run's one-liner,
-`page` = its run card). Publishing it needs a write to `shots`; CLAUDE.md allows `contents: write`
-only on inspect's `shots` job, so no workflow was built. Options:
-
-- **(a)** a `report` input on inspect.yml (e.g. a list of run ids + title): the shots job reads each
-  run's existing `index.html` / sheet from the `shots` branch and writes `shots/report-<id>/index.html`.
-  Stays inside the one job allowed to write; mixes two purposes into one workflow.
-- **(b)** a separate `report.yml` with its own `contents: write` job: cleaner, but needs a CLAUDE.md
-  rule change first.
-- **(c)** the author generates the HTML locally and commits it to `shots` by hand (no workflow,
-  no permission change; manual steps each time).
+Jobs: `render` (read-only: validates, renders with `tools/card_page.py --spec`, uploads the HTML as
+artifact `report-<n>-a<attempt>`) -> `publish` (the ONLY job here with `contents: write`) pushes
+`shots/<slug>/index.html` with `tools/push_shots.sh`, the same race-safe push as inspect's shots job
+(fresh fetch + commit per attempt, 10 jittered retries, no `concurrency:` group because GitHub cancels
+older pending jobs of a group). Its summary prints
+`https://accelquasardragon.github.io/kivy-helper-repro/shots/<slug>/`: post it as in "Posting in Discord"
+(wait until it loads; `?1` to re-embed). Preview locally first:
+`uv run --no-project tools/card_page.py index.html --spec report.json`.
