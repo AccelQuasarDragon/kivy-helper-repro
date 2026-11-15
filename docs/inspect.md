@@ -57,15 +57,38 @@ the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs ->
   an elevated MDCard holding a nested elevated MDCard and an elevated MDButton. Tapping the big card
   (screen center: `540,1200` on pixel_6) or the button goes to the next screen. Prints
   `STUB config {...}` and `STUB screen <name>` to stdout = logcat tag `python`, so the summary
-  shows whether each tap switched screens. Config (later wins): defaults
-  `{"shadows": true, "transition": "Slide"}` -> `app_config.json` (input `app_config`) -> env
-  `STUB_SHADOWS`, `STUB_TRANSITION` (desktop). `shadows: false` zeroes every
-  `CommonElevationBehavior.shadow_color` (KivyMD draws elevation with Kivy's BoxShadow
-  instruction); `transition` = a Kivy screenmanager name (`Slide`, `Fade`, `No`, ...) or a KivyMD
-  one (`MDSlide`, `MDFadeSlide`, `MDSharedAxis`). `materialshapes` (needs pycairo) is not in the
-  requirements: only kivymd's fitimage / loadingindicator import it.
-  Desktop check (2026-11-14, Windows, Python 3.13, kivy 2.3.2 + KivyMD master): runs, screens
-  switch, shadows visibly on/off.
+  shows whether each tap switched screens. Config (later wins): `DEFAULTS` in main.py
+  `{"shadows": true, "transition": "Slide", "count": true, "insets": false, "autotest": 0}` ->
+  `app_config.json` (input `app_config`) -> env `STUB_<KEY>` (desktop, e.g. `STUB_SHADOWS=0`).
+  - `transition`: a Kivy screenmanager name (`Slide`, `Fade`, `No`, ...) or a KivyMD one (`MDSlide`,
+    `MDFadeSlide`, `MDSharedAxis`), applied one frame after build and printed as
+    `STUB transition <class>`. (Before 2026-11-15 it was set in build() and MDScreenManager's
+    next-frame `check_transition` silently replaced any non-MD one with MDSharedAxis: older runs
+    all ran MDSharedAxis.)
+  - `shadows: false`: Factory's `BoxShadow` is swapped for a no-op group before the KV builds, so
+    the `<CommonElevationBehavior>` kv rule (which adds a BoxShadow + its Fbo to EVERY elevated
+    widget, even at alpha 0 / elevation 0) creates none. (The old class-level `shadow_color`
+    hack removed no BoxShadow.)
+  - `count`: after start and after each switch (on_enter):
+    `STUB count screen=<name> boxshadow=<n> fbo_boxshadow=<n> fbo_transition=<n> elevated=<n>`
+    (current screen's tree; `fbo_transition` = cumulative Fbos made by Kivy shader transitions).
+  - `insets: true` (Android): pads the root by the system bar insets read via pyjnius
+    (`getRootWindowInsets`, API 30+ `systemBars()`), at the first frame and again 1 s later;
+    prints `STUB insets top= bottom= left= right= applied=<bool>` (desktop: applied=False).
+  - `autotest: N`: N automatic switches 1.5 s apart, then the app stops (desktop checks).
+  - Always: `STUB gl vendor=... renderer=... version=...` at start (the GPU line for logcat).
+  `materialshapes` (needs pycairo) is not in the requirements: only kivymd's fitimage /
+  loadingindicator import it.
+  Edge-to-edge OPT-OUT (off by default): input `extra` = `android.add_resources=android_res`.
+  It adds `stub_kivymd/android_res/values-v35/styles.xml`, which redefines `KivySupportCutout`
+  (p4a develop's manifest hard-codes it as the ACTIVITY theme, so `android.apptheme` alone does
+  not reach the activity) with `android:windowOptOutEdgeToEdgeEnforcement=true`. Assumes the
+  default `android.display_cutout = never`; ignored by Android at targetSdk >= 36.
+  **UNTESTED on Android**: the opt-out, `insets`, and the GL / count lines on a device.
+  Desktop check (2026-11-15, Windows, Python 3.13, kivy 2.3.2 + KivyMD master, `STUB_AUTOTEST=3`):
+  Slide / Fade / MDSharedAxis each stay applied; per screen `boxshadow=4 fbo_boxshadow=4
+  elevated=4` with shadows on, `boxshadow=0 fbo_boxshadow=0` off; `fbo_transition` grows by 2
+  per switch only with Fade (0 for Slide, MDSharedAxis).
 
 Example dispatch for the first goal (edge-to-edge check):
 label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`, cache `off`.
