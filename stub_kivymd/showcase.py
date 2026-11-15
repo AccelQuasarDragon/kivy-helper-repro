@@ -1,0 +1,168 @@
+"""KivyMD 2.x test app for inspect.yml: 3 screens, top app bar, elevated cards, buttons.
+
+Started by main.py when the config has no bisect `variant` (config: stubkit.py, keys below).
+Keys:
+  transition  a Kivy screenmanager name (Slide, Fade, No, Swap, ...) or a KivyMD one (MDSlide,
+              MDFadeSlide, MDSharedAxis, ...). Applied one frame after build: MDScreenManager
+              replaces a non-MD transition set earlier with MDSharedAxisTransition.
+  shadows     False = Factory's BoxShadow is replaced by a no-op group BEFORE any KV builds an
+              elevated widget, so no BoxShadow (and no BoxShadow Fbo) exists at all.
+  count       print a `STUB count ...` line after start and after each screen switch.
+  insets      Android: pad the root by the system bar insets (pyjnius); desktop: no-op.
+  autotest    N > 0 = switch screens N times automatically (1.5 s apart), then stop the app.
+
+Every config, screen change and measurement is printed as a `STUB ...` line, so it lands in logcat.
+Tapping the center of the screen (the big card) goes to the next screen.
+"""
+import json
+
+from kivy.clock import Clock
+from kivy.lang import Builder
+from kivy.uix import screenmanager
+from kivy.uix.boxlayout import BoxLayout
+from kivymd.app import MDApp
+from kivymd.uix import transition as md_transition
+
+from stubkit import count_line, disable_shadows, gl_line, read_insets
+
+SCREENS = ['home', 'second', 'third']
+
+
+def make_transition(name: str):
+    for module in (screenmanager, md_transition):
+        cls = getattr(module, f'{name}Transition', None)
+        if cls is not None:
+            return cls()
+    raise ValueError(f'unknown transition {name!r}')
+
+
+KV = '''
+<StubScreen@MDScreen>:
+    md_bg_color: self.theme_cls.backgroundColor
+    title: ''
+    body: ''
+    next_name: ''
+    MDBoxLayout:
+        orientation: 'vertical'
+        MDTopAppBar:
+            type: 'small'
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: 'menu'
+            MDTopAppBarTitle:
+                text: root.title
+            MDTopAppBarTrailingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: 'account-circle-outline'
+        MDAnchorLayout:
+            MDCard:
+                style: 'elevated'
+                size_hint: .85, .6
+                padding: '16dp'
+                spacing: '16dp'
+                orientation: 'vertical'
+                on_release: app.go(root.next_name)
+                MDLabel:
+                    text: root.body
+                    font_style: 'Headline'
+                    role: 'small'
+                    halign: 'center'
+                MDCard:
+                    style: 'elevated'
+                    size_hint_y: None
+                    height: '96dp'
+                    padding: '12dp'
+                    MDLabel:
+                        text: 'nested elevated card (shadow test)'
+                        halign: 'center'
+                MDAnchorLayout:
+                    size_hint_y: None
+                    height: '64dp'
+                    MDButton:
+                        style: 'elevated'
+                        on_release: app.go(root.next_name)
+                        MDButtonText:
+                            text: 'Next: ' + root.next_name
+
+MDScreenManager:
+    StubScreen:
+        name: 'home'
+        title: 'Home'
+        body: 'Screen 1 of 3: tap the card'
+        next_name: 'second'
+    StubScreen:
+        name: 'second'
+        title: 'Second'
+        body: 'Screen 2 of 3'
+        next_name: 'third'
+    StubScreen:
+        name: 'third'
+        title: 'Third'
+        body: 'Screen 3 of 3'
+        next_name: 'home'
+'''
+
+
+class StubKivyMDApp(MDApp):
+    def __init__(self, cfg: dict, **kwargs):
+        super().__init__(**kwargs)
+        self.cfg = cfg
+
+    def build(self):
+        print('STUB config', json.dumps(self.cfg, sort_keys=True))
+        if not self.cfg['shadows']:
+            disable_shadows()
+        self.sm = Builder.load_string(KV)
+        # the root box exists so `insets` can pad it; padding 0 = the same look as the bare manager
+        root = BoxLayout()
+        root.add_widget(self.sm)
+        print('STUB screen', self.sm.current)
+        # MDScreenManager.__init__ scheduled check_transition for the next frame: apply ours after it
+        Clock.schedule_once(lambda dt: Clock.schedule_once(self.after_first_frame), 0)
+        return root
+
+    def on_start(self):
+        gl_line()
+
+    def after_first_frame(self, dt) -> None:
+        self.sm.transition = make_transition(self.cfg['transition'])
+        print('STUB transition', type(self.sm.transition).__name__)
+        for screen in self.sm.screens:
+            screen.bind(on_enter=lambda s: self.count())
+        self.count()
+        self.apply_insets()
+        if self.cfg['insets']:
+            Clock.schedule_once(lambda dt: self.apply_insets(), 1.0)  # again once fully attached
+        if self.cfg['autotest'] > 0:
+            self.autotest_left = self.cfg['autotest']
+            Clock.schedule_once(self.autotest_step, 1.5)
+
+    def count(self) -> None:
+        if not self.cfg['count'] or self.sm.current_screen is None:
+            return
+        print(count_line(self.sm.current, self.sm.current_screen))
+
+    def apply_insets(self) -> None:
+        ins = read_insets() if self.cfg['insets'] else None
+        applied = ins is not None
+        top, bottom, left, right = ins or (0, 0, 0, 0)
+        if applied:
+            self.root.padding = [left, top, right, bottom]  # Kivy padding = left, top, right, bottom
+        print(f'STUB insets top={top} bottom={bottom} left={left} right={right} applied={applied}')
+
+    def autotest_step(self, dt) -> None:
+        if self.autotest_left <= 0:
+            print('STUB autotest done')
+            self.stop()
+            return
+        self.autotest_left -= 1
+        self.go(self.sm.get_screen(self.sm.current).next_name)
+        Clock.schedule_once(self.autotest_step, 1.5)
+
+    def go(self, name: str) -> None:
+        self.sm.current = name
+        print('STUB screen', name)
+
+
+def run(cfg: dict) -> None:
+    StubKivyMDApp(cfg).run()
