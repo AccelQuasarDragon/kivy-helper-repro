@@ -128,6 +128,7 @@ jobs:
       CACHE: ${{ inputs.cache }}
       APK_HIT: ${{ needs.build.outputs.apk_hit || 'n/a' }}
       COLD: ${{ needs.build.outputs.cold || 'n/a' }}
+      CACHES: ${{ needs.build.outputs.caches || 'n/a' }}
       IMAGE_DIGEST: ${{ needs.build.outputs.image_digest || 'n/a (apk_url)' }}
       SRC_ID: ${{ needs.build.outputs.src_id || 'n/a (apk_url)' }}
       OUT: out
@@ -219,9 +220,9 @@ jobs:
           ls "$OUT"/*.png >/dev/null 2>&1 && shots=true
           echo "shots=$shots" >> "$GITHUB_OUTPUT"
           rd() { [ -f "$OUT/$1" ] && tr -d '\r' < "$OUT/$1" || echo "n/a"; }
-          if [ "$COLD" = 'true' ]; then verdict='**COLD RUN: counts as evidence**';
+          if [ "$COLD" = 'true' ]; then verdict='**COLD RUN (nothing restored from any cache): counts as evidence**';
           elif [ "$COLD" = 'n/a' ]; then verdict='no build (apk_url): the APK itself is the input';
-          else verdict='WARM RUN: not evidence (CLAUDE.md)'; fi
+          else verdict='**WARM RUN (a cache was restored): not evidence (CLAUDE.md)**'; fi
           {
             echo "## inspect: $LABEL"
             echo
@@ -229,7 +230,8 @@ jobs:
             echo
             echo "- APK: \`$APK_NAME\` sha256 \`$APK_SHA\` (from: ${APK_URL:+apk_url}${APK_URL:-build \`$SRC_ID\`})"
             echo "- build image: \`$IMAGE_DIGEST\`"
-            echo "- cache: \`$CACHE\`, apk cache hit: \`$APK_HIT\`. $verdict"
+            echo "- $verdict"
+            echo "- cache input: \`$CACHE\`; per cache: $CACHES"
             echo "- inputs: static_only \`$STATIC_ONLY\`, api_level \`$API_LEVEL\`, profile \`$PROFILE\`, launch_wait \`$LAUNCH_WAIT\`, taps \`$TAPS\`"
             echo '### static facts'
             echo "- package \`$PKG\`, targetSdk \`$TARGET_SDK\`, minSdk \`$MIN_SDK\`, ABIs \`$ABIS\`"

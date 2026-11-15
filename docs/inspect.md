@@ -102,8 +102,12 @@ label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`,
    15+ enforces edge-to-edge for this APK), logcat hits, `app pid at end` (none = the app died).
 2. The `shots` job summary: the contact sheet. Edge-to-edge overlap = app content (e.g. the top
    app bar) drawn under the status bar / navigation bar.
-3. Evidence rule (CLAUDE.md cache protocol): only a COLD run (cache `off`, no APK cache hit) is
-   evidence. `apk_url` runs say "no build": the APK itself is the input.
+3. Evidence rule (CLAUDE.md cache protocol): only a COLD run is evidence. COLD = NO cache restored
+   anything (actions/cache `cache-hit` is not `true` for sdk, full or apk); WARM = any hit. It
+   follows the actual hits, not the `cache` input: `cache: sdk` whose key missed is COLD (the SDK /
+   NDK were downloaded fresh). The summary prints each cache as `HIT` / `MISS` / `not used` /
+   `skipped (apk hit)` with its exact key. (Before 2026-11-15 any `cache` != `off` printed WARM even
+   on a total miss.) `apk_url` runs say "no build": the APK itself is the input.
 
 ## Limits
 - **No GPU / hardware bugs**: the emulator renders with SwiftShader (software), not e.g. Adreno

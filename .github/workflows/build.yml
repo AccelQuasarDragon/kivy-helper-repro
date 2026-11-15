@@ -83,6 +83,7 @@ on:
       artifact: {value: '${{ jobs.build.outputs.artifact }}'}
       apk_hit: {value: '${{ jobs.build.outputs.apk_hit }}'}
       cold: {value: '${{ jobs.build.outputs.cold }}'}
+      caches: {value: '${{ jobs.build.outputs.caches }}'}
       image_digest: {value: '${{ jobs.build.outputs.image_digest }}'}
       src_id: {value: '${{ jobs.build.outputs.src_id }}'}
 
@@ -118,6 +119,7 @@ jobs:
       artifact: ${{ inputs.artifact_name && format('{0}-a{1}', inputs.artifact_name, github.run_attempt) || format('build-{0}', github.run_number) }}
       apk_hit: ${{ steps.apk_restore.outputs.cache-hit == 'true' }}
       cold: ${{ steps.out.outputs.cold }}
+      caches: ${{ steps.out.outputs.caches }}
       image_digest: ${{ steps.out.outputs.image_digest }}
       src_id: ${{ steps.out.outputs.src_id }}
     steps:
@@ -260,30 +262,53 @@ jobs:
           path: work/bin
           key: ${{ steps.ck.outputs.apk }}
 
+      # COLD/WARM follows what was ACTUALLY restored (cache-hit outputs), not the cache input:
+      # cache=sdk with a missed key restored nothing, so the run is cold. Empty cache-hit = miss.
       - name: Outputs
         id: out
         if: always()
         env:
           APK_HIT: ${{ steps.apk_restore.outputs.cache-hit }}
+          SDK_HIT: ${{ steps.sdk_restore.outputs.cache-hit }}
+          FULL_HIT: ${{ steps.full_restore.outputs.cache-hit }}
+          APK_KEY: ${{ steps.ck.outputs.apk }}
+          SDK_KEY: ${{ steps.ck.outputs.sdk }}
+          FULL_KEY: ${{ steps.ck.outputs.full }}
         run: |
-          cold=false
-          if [ "$CACHE" = 'off' ] && [ "$APK_HIT" != 'true' ]; then cold=true; fi
+          # state <used> <hit> <skipped-by-apk-hit>
+          st() { if [ "$1" != 'true' ]; then echo 'not used'; elif [ "$2" = 'true' ]; then echo 'HIT';
+                 elif [ "$3" = 'true' ]; then echo 'skipped (apk hit)'; else echo 'MISS'; fi; }
+          apk_hit=false; if [ "$APK_HIT" = 'true' ]; then apk_hit=true; fi
+          sdk_used=false; if [ "$CACHE" != 'off' ]; then sdk_used=true; fi
+          full_used=false; if [ "$CACHE" = 'full' ]; then full_used=true; fi
+          apk_st=$(st "$APK_CACHE" "$APK_HIT" false)
+          sdk_st=$(st "$sdk_used" "$SDK_HIT" "$apk_hit")
+          full_st=$(st "$full_used" "$FULL_HIT" "$apk_hit")
+          cold=true
+          for x in "$APK_HIT" "$SDK_HIT" "$FULL_HIT"; do if [ "$x" = 'true' ]; then cold=false; fi; done
+          # one entry: <level>: <state> (<key>), key only when that cache was used
+          ent() { if [ "$2" = 'not used' ]; then echo "$1: $2"; else echo "$1: $2 ($3)"; fi; }
+          caches="$(ent sdk "$sdk_st" "$SDK_KEY"); $(ent full "$full_st" "$FULL_KEY"); $(ent apk "$apk_st" "$APK_KEY")"
           echo "cold=$cold" >> "$GITHUB_OUTPUT"
+          echo "caches=$caches" >> "$GITHUB_OUTPUT"
           echo "image_digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
           echo "src_id=$SRC_ID" >> "$GITHUB_OUTPUT"
+          echo "cache input: $CACHE, apk_cache: $APK_CACHE"
+          echo "caches: $caches"
+          if [ "$cold" = 'true' ]; then echo 'COLD: nothing restored from any cache'; else echo 'WARM: a cache was restored'; fi
 
       - name: Summary
         if: always()
         env:
-          SDK_HIT: ${{ steps.sdk_restore.outputs.cache-hit || 'n/a' }}
-          FULL_HIT: ${{ steps.full_restore.outputs.cache-hit || 'n/a' }}
-          APK_HIT: ${{ steps.apk_restore.outputs.cache-hit || 'n/a' }}
+          APK_HIT: ${{ steps.apk_restore.outputs.cache-hit }}
           COLD: ${{ steps.out.outputs.cold }}
+          CACHES: ${{ steps.out.outputs.caches }}
         run: |
           {
             echo "## build: $LABEL"
-            if [ "$COLD" = 'true' ]; then verdict=' **COLD RUN: counts as evidence**'; else verdict=' WARM RUN: not evidence (CLAUDE.md)'; fi
-            echo "- cache: \`$CACHE\` (sdk hit: \`$SDK_HIT\`, full hit: \`$FULL_HIT\`, apk_cache: \`$APK_CACHE\`, apk hit: \`$APK_HIT\`)$verdict"
+            if [ "$COLD" = 'true' ]; then verdict='**COLD RUN (nothing restored from any cache): counts as evidence**'; else verdict='**WARM RUN (a cache was restored): not evidence (CLAUDE.md)**'; fi
+            echo "- $verdict"
+            echo "- cache input: \`$CACHE\`, apk_cache: \`$APK_CACHE\`; per cache: $CACHES"
             echo "- host: \`$HOST_ARCH\` ($RUNNER_NAME_IN)"
             echo "- image: \`$IMAGE_DIGEST\`"
             echo "- source: \`$SRC_ID\`"
