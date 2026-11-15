@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kivy/KivyMD Android crash + edge-to-edge: test report</title>
+<meta property="og:type" content="website">
+<meta property="og:title" content="Kivy/KivyMD Android crash + edge-to-edge: test report">
+<meta property="og:description" content="Crash: a GPU-driver crash in a Kivy Fbo draw after a screen switch; trigger to be named by a 5-APK phone kit (all 5 pass on the emulator). Edge-to-edge: overlap at targetSdk 35/36 on Android 15, two…">
+<meta property="og:image" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/final-report-2026-11-15/sheet.png">
+<meta property="og:url" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/final-report-2026-11-15/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Kivy/KivyMD Android crash + edge-to-edge: test report">
+<meta name="twitter:description" content="Crash: a GPU-driver crash in a Kivy Fbo draw after a screen switch; trigger to be named by a 5-APK phone kit (all 5 pass on the emulator). Edge-to-edge: overlap at targetSdk 35/36 on Android 15, two…">
+<meta name="twitter:image" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/final-report-2026-11-15/sheet.png">
+<meta name="theme-color" content="#2b6cb0">
+<meta name="description" content="Crash: a GPU-driver crash in a Kivy Fbo draw after a screen switch; trigger to be named by a 5-APK phone kit (all 5 pass on the emulator). Edge-to-edge: overlap at targetSdk 35/36 on Android 15, two…">
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:16px;background:#111;color:#eee}a{color:#8cf}img{max-width:100%;height:auto;display:block;margin:8px 0}section{border-top:1px solid #444;margin-top:24px}.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}</style>
+</head>
+<body>
+<h1>Kivy/KivyMD Android crash + edge-to-edge: test report</h1>
+<p>Crash: a GPU-driver crash in a Kivy Fbo draw after a screen switch; trigger to be named by a 5-APK phone kit (all 5 pass on the emulator). Edge-to-edge: overlap at targetSdk 35/36 on Android 15, two fixes tested.</p>
+<p><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/shots/shots/final-report-2026-11-15/TESTS.md">TESTS.md (every run in a table)</a></p>
+<img src="https://accelquasardragon.github.io/kivy-helper-repro/shots/final-report-2026-11-15/sheet.png" alt="Kivy/KivyMD Android crash + edge-to-edge: test report">
+<section>
+<h2>Root cause</h2>
+<p>PROVEN (from the reporter&#x27;s own crash log, read privately, nothing copied): the app dies with a native crash inside the GPU driver while Kivy draws into an Fbo, right after a screen switch. It is not a Python error. INFERRED (not yet tested on the phone): what creates that Fbo. Candidates: an Fbo-based screen transition (Fade / Wipe; our A-7 v2 run shows Fade adds Fbos on every switch), KivyMD shadows (elevation -&gt; BoxShadow, one Fbo each; A-6 shows shadows off removes them), or any Fbo. In the public controlP code the screen manager keeps KivyMD&#x27;s default MDSharedAxisTransition (no Fbo in our runs) and only the home screen cards have elevation + shadow, so shadows are the leading suspect there. The 5-APK kit tells these apart on the real phone. Separate issue: the status-bar overlap appears only on Android 15+ at targetSdk 35+, so it is a heads-up for newer phones, not this crash.</p>
+</section>
+<section>
+<h2>Recommendations</h2>
+<p>Crash workaround: turn off elevation / shadows on the screens involved in the switch (controlP: views/home/home.kv lines 10-13), and if you set a transition yourself, avoid Fade / Wipe. With MDScreenManager pick an MD transition (MDSlideTransition, MDSwapTransition): a plain Kivy transition set at startup is replaced by MDSharedAxisTransition on the next frame. Then run the 5-APK kit and report which variants crash. Build: p4a develop, materialyoucolor==3.0.4 (p4a&#x27;s recipe ships 2.0.10, too old for KivyMD master), plus materialshapes, pycairo and pillow (KivyMD master needs materialshapes&gt;=0.3; p4a installs KivyMD without its dependencies). Overlap: on Android 15+ at targetSdk 35+ only. At targetSdk 36 pad the layout with the window insets (A-4); the opt-out resource works at targetSdk 35 (A-3) but Android 16 ignores it at 36.</p>
+<ul>
+<li><a href="https://github.com/kivymd/KivyMD/blob/master/setup.py">KivyMD master install_requires (setup.py)</a></li>
+</ul>
+</section>
+<section>
+<h2>How to use the 5-APK kit</h2>
+<p>Five small APKs, each adding one factor: 1 plain Kivy, 2 + one raw Fbo, 3 + Kivy BoxShadow, 4 KivyMD with shadows off, 5 KivyMD with shadows on. Download them from the build matrix run (artifacts need a GitHub login), install all 5, open each, tap START once and leave the phone alone for 30 s: it flips between two screens 20 times and shows DONE (variant N, 20/20). Report for each: CLOSED BEFORE START, CRASH DURING SWITCHES (with the last switch number seen) or NO CRASH, plus phone model and Android version. Reading: first crash at 3 (or at 5 with 4 clean) = BoxShadow; at 2 = any Fbo; at 1 = not Fbo; at 4 but not 3 = KivyMD widgets / transition; none = another factor in the app. All 5 passed the emulator gate (runs above), so a crash on the phone is the phone&#x27;s, not the kit&#x27;s.</p>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43747921162">kit build (5 APK artifacts)</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/main/docs/bisect.md">kit instructions (docs/bisect.md)</a></li>
+</ul>
+</section>
+<section>
+<h2>Limits</h2>
+<p>The emulator renders with SwiftShader (software OpenGL ES 3.0), so it cannot show a GPU-driver crash: the gate proves the kit itself runs, not that the phone is fine. Emulator = Android 15 (API 35), pixel_6; the reporter&#x27;s phone, OEM skin and driver differ. Android 16 behaviour (the opt-out being ignored at targetSdk 36) was not tested. The trigger of the crash is inferred until the kit results come back. A GitHub run does not reuse a local .buildozer folder, so stale local build state is not covered.</p>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741041210/">A-1 baseline, targetSdk 35</a></h2>
+<p>Q: Stub KivyMD app (KivyMD master, Kivy 2.3.2, p4a develop) at targetSdk 35 on an Android 15 emulator: does the status bar overlap the top app bar? · Result: Overlap YES: clock and icons drawn over the app bar. (The app later died on a tap: materialshapes missing in OUR stub, fixed in kit v2; not the reporter&#x27;s crash.) · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741041210/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741041210/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741041210">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741041210/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741043821/">A-2 targetSdk 34</a></h2>
+<p>Q: Same app at targetSdk 34: is the overlap gone? · Result: No overlap: Android draws its own status bar and the app starts below it. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741043821/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741043821/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741043821">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741043821/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741047834/">A-2b targetSdk 36</a></h2>
+<p>Q: Same app at targetSdk 36 (buildozer&#x27;s default android.api): overlap? · Result: Overlap YES, same as targetSdk 35. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741047834/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741047834/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741047834">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741047834/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741050621/">A-3 opt-out resource, targetSdk 35</a></h2>
+<p>Q: targetSdk 35 + android.add_resources with windowOptOutEdgeToEdgeEnforcement: does the opt-out remove the overlap on Android 15? · Result: No overlap: the opt-out works on Android 15 at targetSdk 35. (Android 16 ignores it at targetSdk 36: not tested here.) · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741050621/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741050621/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741050621">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741050621/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741053567/">A-4 insets padding, targetSdk 36</a></h2>
+<p>Q: targetSdk 36 + padding from the window insets (pyjnius getRootWindowInsets): is the overlap gone? · Result: No overlap: insets read top=128 bottom=63 px (pixel_6) and the padding moves the app bar below the status bar. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741053567/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741053567/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741053567">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741053567/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741056269/">A-6 shadows off</a></h2>
+<p>Q: Does turning KivyMD shadows off remove the BoxShadows and their Fbos? · Result: Yes: home screen BoxShadow 4 -&gt; 0 and Fbo 4 -&gt; 0; the 4 elevated widgets stay, drawn flat. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741056269/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43741056269/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43741056269">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43741056269/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43747923970/">A-7 v2 FadeTransition</a></h2>
+<p>Q: With FadeTransition, do screen switches create Fbos (fixed stub, taps on cards)? · Result: Yes: switches work (home -&gt; second -&gt; third, app OK) and Fade adds Fbos per switch (fbo_transition 0 -&gt; 2 -&gt; 4). The kit&#x27;s Slide / MDSharedAxis switches add none. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/01_tap_540_1200.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/01_tap_540_1200.png" alt="01_tap_540_1200.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/02_tap_540_1200.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43747923970/02_tap_540_1200.png" alt="02_tap_540_1200.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43747923970">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43747923970/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750570408/">Kit gate 1: Kivy plain</a></h2>
+<p>Q: Kit APK 1 (plain Kivy, SlideTransition) on the emulator: START, 20 screen switches, DONE? · Result: PASS: APP OK, DONE (variant 1, 20/20), 20 created + 20 frames lines, no traceback. · APK · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750570408/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750570408/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750570408/01_tap_540_2060.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750570408/01_tap_540_2060.png" alt="01_tap_540_2060.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750570408">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750570408/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750573669/">Kit gate 2: Kivy Fbo</a></h2>
+<p>Q: Kit APK 2 (plain Kivy + one raw Fbo) on the emulator: 20 switches, DONE? · Result: PASS: APP OK, DONE (variant 2, 20/20), no traceback. · APK · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750573669/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750573669/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750573669/01_tap_540_2060.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750573669/01_tap_540_2060.png" alt="01_tap_540_2060.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750573669">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750573669/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750576822/">Kit gate 3: Kivy BoxShadow</a></h2>
+<p>Q: Kit APK 3 (plain Kivy + 3 BoxShadows) on the emulator: 20 switches, DONE? · Result: PASS: APP OK, DONE (variant 3, 20/20), no traceback. · APK · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750576822/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750576822/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750576822/01_tap_540_2060.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750576822/01_tap_540_2060.png" alt="01_tap_540_2060.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750576822">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750576822/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750579711/">Kit gate 4: KivyMD plain</a></h2>
+<p>Q: Kit APK 4 (MDScreenManager + MDSharedAxis, elevated cards, shadows off) on the emulator: 20 switches, DONE? · Result: PASS: APP OK, DONE (variant 4, 20/20), KivyMD loaded, no traceback. · APK · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750579711/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750579711/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750579711/01_tap_540_2060.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750579711/01_tap_540_2060.png" alt="01_tap_540_2060.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750579711">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750579711/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750582692/">Kit gate 5: KivyMD BoxShadow</a></h2>
+<p>Q: Kit APK 5 (as 4, stock shadows on) on the emulator: 20 switches, DONE? · Result: PASS: APP OK, DONE (variant 5, 20/20), KivyMD loaded, no traceback. · APK · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750582692/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750582692/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750582692/01_tap_540_2060.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750582692/01_tap_540_2060.png" alt="01_tap_540_2060.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750582692">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750582692/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43733325270/">controlP public code, targetSdk 36</a></h2>
+<p>Q: yabb85/controlP master with sqlite3 out of the blacklist, p4a develop, materialyoucolor==3.0.4, materialshapes, pycairo, pillow: does it build and start? Overlap? · Result: Builds, starts, alive at the end, no traceback. Overlap YES at the top (targetSdk 36 on Android 15). Home list empty (no hardware on the network). · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43733325270/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43733325270/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43733325270">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43733325270/">run card</a></li>
+</ul>
+</section>
+<section>
+<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750717801/">Final cold baseline</a></h2>
+<p>Q: Final cold re-run of the fixed stub with default settings, as a last check before posting. · Result: APP OK (alive at end); launch shot: status bar drawn over the app bar at targetSdk 35 (same as A-1). Stub fixed (materialshapes), cold. · COLD · proven</p>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/00_launch.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/00_launch.png" alt="00_launch.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/01_tap_540_1200.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/01_tap_540_1200.png" alt="01_tap_540_1200.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/02_tap_540_1200.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/43750717801/02_tap_540_1200.png" alt="02_tap_540_1200.png" loading="lazy"></a>
+</div>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/43750717801">run</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/43750717801/">run card</a></li>
+</ul>
+</section>
+</body>
+</html>
