@@ -11,20 +11,38 @@ one section per run (`--spec card.json`; og:image = the first section's sheet un
 Every text value is HTML-escaped; every URL must be https on `raw.githubusercontent.com`,
 `github.com` or `accelquasardragon.github.io` (`--allow-host` adds one, e.g. a fork's Pages host).
 The description is cut to 200 chars. See the docstring for the CLI and the JSON spec.
+Bad input (a URL that is not plain https on an allowed host, incl. any explicit port; a spec that is
+not valid JSON or has the wrong shape; a missing key) = one `card_page: ...` line on stderr, exit 2.
+Callers pass free text in the `=` form (`--title="$LABEL"`), so a label like `--help` stays a value.
 
 ## Run cards (automatic)
 inspect.yml's `shots` job writes `shots/<run_id>/index.html` next to the PNGs. Title = the run's
-`label`; description = `COLD|WARM run · APP ALIVE|APP DIED|... · targetSdk N · K screenshot(s)`
-(fixed words from the inspect job, never log text). It adds an empty `.nojekyll` at the branch root
+`label`; description = `<source> · <app state> · targetSdk N · K screenshot(s)`, fixed words from
+the inspect job, never log text:
+- source: `COLD run` (built, nothing restored from a cache), `WARM run` (built, a cache hit), or
+  `APK input (no build)` (the APK came from `apk_url` or another run's artifact);
+- app state: `APP ALIVE`, `APP DIED`, `APP NOT INSTALLED`, `ADB LOST DEVICE`, `APP STATE UNKNOWN`,
+  or `static only` (`static_only` run: no emulator);
+- N = targetSdk from aapt2 (`?` when unreadable);
+- a non-built APK adds a last piece: ` · from apk_url`, or ` · from run <id> artifact <name>`
+  (validated digits / charset only), and an artifact card links the source run.
+ It adds an empty `.nojekyll` at the branch root
 so Pages serves files as-is, and prints the page URL in the step log and the job summary.
 
 **One-time setup (author):** Settings -> Pages -> Deploy from a branch -> `shots`, `/ (root)`.
-A page appears about a minute after each push.
+Pages deploys about a minute (sometimes more) after each push.
+
+**Pruning:** `shots/` grows by one folder per inspect run, and a Pages site is limited to about 1 GB.
+When it gets big, delete old `shots/<run_id>/` folders from the `shots` branch (their card pages
+and raw PNG links stop working; the runs' artifacts expire after 14 days anyway).
 
 URL pattern: `https://accelquasardragon.github.io/kivy-helper-repro/shots/<run_id>/`
 (runs before this feature have no `index.html`; their raw PNG links still work).
 
 ## Posting in Discord
+- Open the Pages URL in a browser FIRST and post it only once it loads (Pages needs ~1+ minute
+  after the push). Posted too early, Discord caches an empty embed for that URL: post it again
+  with `?1` appended (`.../shots/<run_id>/?1`; `?2` for a second retry), which Discord treats as a new link.
 - Post the Pages URL **bare** on its own: that link makes the card.
 - Wrap every other link in `<...>` (e.g. `<https://github.com/...>`) to suppress its embed, or remove
   an unwanted embed with the X on your own message.

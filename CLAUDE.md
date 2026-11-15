@@ -19,9 +19,8 @@ One reusable workflow, not one repo per question.
   facts + optional x86_64 emulator run (taps, screenshots, our runner's logcat); builds via build.yml
   (`workflow_call`); screenshots go to the orphan branch `shots`. Helpers: `tools/apk_pkgs.py`,
   `tools/emu_run.sh`, `tools/contact_sheet.py`. Test app: `stub_kivymd/` (+ its `spec_overrides.txt`).
-- `QUEUE.md`: the DETAIL SPEC of planned items (runs, hypotheses, acceptance). SUPERSEDED for status (author,
-  2026-11-14): status, order and done-ness live in the author's private task tracker (lane "kivy help"); never track
-  status in QUEUE.md.
+- NOTES / RUN LOGS go in `runs/*.md` (git-ignored = local only, never committed; e.g. `runs/log.md`). Only the
+  `runs/*.txt` excerpts are tracked (cited upstream: keep unchanged). Task status lives in the author's private tracker.
 
 ## How to run a repro
 Actions tab -> "buildozer repro" -> Run workflow. Or via the API (workflow_dispatch on `build.yml`,

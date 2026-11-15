@@ -18,6 +18,8 @@ CLI (any card, incl. a report) from a JSON spec:
                         "page": url}]}
   (a report spec has several sections; "image" may be omitted = the first section's image)
 Locally: uv run --no-project tools/card_page.py ...
+Exit codes: 0 written, 2 bad input (bad URL, malformed spec, missing key); argparse errors are 2 too.
+Pass free text in the `=` form (--title="$LABEL") so a value like `--help` is not read as an option.
 """
 import argparse
 import html
@@ -35,7 +37,7 @@ def check_url(url: str, hosts) -> str:
     if not isinstance(url, str) or any(c.isspace() for c in url):
         raise ValueError(f'bad URL: {url!r}')
     parts = urlsplit(url)
-    if parts.scheme != 'https' or parts.username or parts.password or parts.port:
+    if parts.scheme != 'https' or parts.username or parts.password or parts.port is not None:
         raise ValueError(f'URL must be plain https: {url!r}')
     if (parts.hostname or '').lower() not in hosts:
         raise ValueError(f'host not allowed: {parts.hostname!r} (allowed: {", ".join(hosts)})')
@@ -126,8 +128,15 @@ def main() -> int:
     a = ap.parse_args()
     hosts = ALLOWED_HOSTS + tuple(a.allow_host)
     if a.spec:
-        with open(a.spec, encoding='utf-8') as f:
-            card = json.load(f)
+        try:
+            with open(a.spec, encoding='utf-8') as f:
+                card = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f'card_page: cannot read spec {a.spec!r}: {exc}', file=sys.stderr)
+            return 2
+        if not isinstance(card, dict):
+            print('card_page: spec must be a JSON object', file=sys.stderr)
+            return 2
     else:
         if not (a.title and a.image and a.url):
             ap.error('--title, --image and --url are required without --spec')
@@ -141,9 +150,10 @@ def main() -> int:
                 'sections': [{'images': a.img, 'links': links}]}
     try:
         write(a.out, card, hosts)
-    except (ValueError, KeyError) as exc:
-        print(f'card_page: {exc}', file=sys.stderr)
-        return 1
+    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        # bad values or a malformed spec (wrong types / shapes): one clean line, exit 2
+        print(f'card_page: {type(exc).__name__}: {exc}', file=sys.stderr)
+        return 2
     print(f'{a.out}: card page written')
     return 0
 
