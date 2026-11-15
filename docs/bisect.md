@@ -1,6 +1,6 @@
 # Q-B hardware bisection kit: 5 test APKs for a phone that crashes
 
-For people and LLMs. Spec: QUEUE.md "Q-B HARDWARE BISECTION KIT". Code: `stub_kivymd/ladder.py` (the
+For people and LLMs. Spec: the removed QUEUE.md "Q-B HARDWARE BISECTION KIT" (git history, commit bcdce3c). Code: `stub_kivymd/ladder.py` (the
 rule), `stub_kivymd/bisect_app.py` (the app), `.github/workflows/matrix.yml` (one run, 5 APKs).
 
 ## Why
@@ -19,7 +19,7 @@ neither screen has its cards: launch draws no variant Fbo / BoxShadow (desktop c
 `boxshadow=0 fbo=0` in all 5). Each screen's cards are first built when it arrives (screen 2 at
 switch 1, screen 1 at switch 2).
 
-| # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | made per switch (desktop) | Fbo owners nudged per frame |
+| # | name (app title `Bisect N <name>`) | package | ladder step | made per switch (desktop) | Fbo owners nudged per frame |
 |---|---|---|---|---|---|
 | 1 | Kivy plain | org.khr.bisect1 | plain Kivy ScreenManager + SlideTransition | 4 widgets, 0 BoxShadow, 0 Fbo | 0 |
 | 2 | Kivy Fbo | org.khr.bisect2 | 1 + one raw Kivy Fbo | 5 widgets, 0 BoxShadow, 1 Fbo | 1 |
@@ -65,7 +65,7 @@ v3.0.4 release tarball). `extra` raises android.api to 36 (the reporter's). Cach
 only evidence). Artifacts `build-<run>-bisect1..5-a<attempt>` hold the debug APKs; the `facts` job
 prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages, ABI arm64-v8a).
 
-## 2. GATE: emulator smoke test of all 5 before anything is sent (QUEUE.md acceptance)
+## 2. GATE: emulator smoke test of all 5 before anything is sent (Q-B acceptance)
 inspect.yml, one run per variant (it builds an arm64 + x86_64 twin of the same source): app empty
 (= stub_kivymd), app_config `{"variant": N}`, extra
 `package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,2060,30` (START = the bottom
@@ -76,7 +76,7 @@ PASS for a variant = the screenshot after the tap shows `DONE (variant N, 20/20)
 before the APKs go out; a failure here is our bug, not the phone's. Do not use `autotest` here (it
 stops the app after DONE, which reads like a crash). The software emulator CANNOT clear a GPU-driver
 crash: the gate only proves the app itself runs.
-BUDGET NOTE: these are 5 more builds on top of QUEUE.md's "3 runs for Q-B" (inspect cannot take a
+BUDGET NOTE: these are 5 more builds on top of the original "3 runs for Q-B" budget (inspect cannot take a
 matrix artifact: `apk_url` needs a public https URL). Either accept the extra runs, or let the parent
 add an `add_archs: x86_64` matrix + an inspect input that reads a run's artifact.
 
@@ -106,7 +106,7 @@ add an `add_archs: x86_64` matrix + an inspect input that reads a run's artifact
 | 4 | KivyMD shadows off | | |
 | 5 | KivyMD shadows on | | |
 
-## 5. How to read it (QUEUE.md)
+## 5. How to read it
 Use the first variant whose answer is CRASH DURING SWITCHES:
 - first crash at 3 (or at 5 with 4 clean) = BoxShadow, the leading theory; workaround = shadows off /
   elevation 0 on that phone. First crash at 2 = any Fbo. Crash at 1 = not Fbo at all (Kivy GL or the

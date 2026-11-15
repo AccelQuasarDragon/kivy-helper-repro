@@ -20,7 +20,7 @@ import sys
 
 UIS = ('kivy', 'kivymd')
 EXTRAS = ('plain', 'fbo', 'shadow')
-SKIP = {('kivymd', 'fbo')}  # outside the 5-slot budget (QUEUE.md Q-B); a 6th test if ever allowed
+SKIP = {('kivymd', 'fbo')}  # outside the 5-slot budget (Q-B plan); a 6th test if ever allowed
 UI_NAME = {'kivy': 'Kivy', 'kivymd': 'KivyMD'}
 EXTRA_NAME = {'plain': 'plain', 'fbo': 'Fbo', 'shadow': 'BoxShadow'}
 
