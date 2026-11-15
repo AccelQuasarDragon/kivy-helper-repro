@@ -1,0 +1,5 @@
+# local-only files: never committed
+__pycache__/
+*.pyc
+# chat / night notes stay local (the committed runs/*.txt excerpts are cited upstream and stay tracked)
+runs/*.md
