@@ -101,8 +101,11 @@ label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`,
 ## How to read results
 1. Summary of the `inspect` job first. Its FIRST line (emulator runs) is the app state:
    `**APP DIED: FAIL**` (no app pid at the end; plus the first Python traceback's exception line
-   when logcat has one), `**APP ALIVE at end**`, or `**APP STATE UNKNOWN**` (the emulator run did
-   not finish). The workflow stays green when the app dies: read this line, not the check mark.
+   when logcat has one), `**APP NOT INSTALLED: FAIL**` (adb install failed; its last line shown),
+   `**ADB LOST DEVICE: UNKNOWN**` (adb no longer saw the emulator), `**APP ALIVE at end**`, or
+   `**APP STATE UNKNOWN**` (no pid_at_end.txt: the emulator run did not finish). `tools/emu_run.sh`
+   writes these states to `pid_at_end.txt`. On the emulator retry (attempt 2), attempt 1's files
+   are moved to `out/prev_attempt_1/` first, so the summary reports only the last attempt. The workflow stays green when the app dies: read this line, not the check mark.
    Then the bold GPU line, static facts (targetSdk >= 35 = Android 15+ enforces edge-to-edge for
    this APK), logcat hits.
 2. The `shots` job summary: the contact sheet. Edge-to-edge overlap = app content (e.g. the top

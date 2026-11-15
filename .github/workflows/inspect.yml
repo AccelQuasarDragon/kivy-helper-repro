@@ -237,6 +237,10 @@ jobs:
                       grep -m1 -E '^ *[A-Za-z_][A-Za-z0-9_.]*(Error|Exception|Exit|Interrupt)(:|$)' | cut -c1-200 || true)
                 [ -z "$exc" ] || state="$state: \`$exc\`"
               fi
+            elif [ "$pid" = 'not-installed' ]; then
+              state="**APP NOT INSTALLED: FAIL** (install: \`$(rd install.txt | tail -1 | cut -c1-200)\`)"
+            elif [ "$pid" = 'no-device' ]; then
+              state='**ADB LOST DEVICE: UNKNOWN** (adb get-state was not `device` at the end)'
             elif [ "$pid" = 'n/a' ]; then
               state='**APP STATE UNKNOWN** (no pid_at_end.txt: the emulator run did not finish)'
             else
