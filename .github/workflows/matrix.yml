@@ -5,7 +5,7 @@ name: build matrix
 # missing keys get build.yml's own workflow_call defaults (empty requirements / p4a_branch / archs =
 # keep the app's spec_overrides.txt values: the workflow_dispatch form defaults do NOT apply here).
 # Non-string values of string inputs are passed as compact JSON (so app_config may be an object).
-# Artifacts: build-<run_number>-<name>; the `facts` job prints aapt2 facts of every APK in one table.
+# Artifacts: build-<run_number>-<name>-a<run_attempt>; the `facts` job (latest attempt per name) prints aapt2 facts of every APK in one table.
 # Docs: docs/bisect.md (the Q-B kit's JSON). Inputs reach the shell through env: only.
 on:
   workflow_dispatch:
@@ -40,7 +40,8 @@ jobs:
           import json, os, re, sys
           def fail(msg):
               print(f'::error::{msg}'); sys.exit(1)
-          # build.yml's workflow_call inputs + their defaults (keep in sync with build.yml)
+          # MIRRORS build.yml's workflow_call inputs + defaults (a literal copy: keep in sync by hand;
+          # artifact_name is set below; label gets '<run label> <name>'). Unknown keys are refused.
           DEFAULTS = {'label': '', 'runner': 'ubuntu-latest', 'image': 'ghcr.io/kivy/buildozer:latest',
                       'repo': '', 'ref': 'HEAD', 'app': '', 'requirements': '', 'p4a_branch': '',
                       'archs': '', 'add_archs': '', 'extra': '', 'app_config': '',
@@ -149,7 +150,9 @@ jobs:
             echo '|---|---|---|---|---|---|---|---|'
             printf '%s' "$BUILDS" | python3 -c 'import json,sys; [print(e["name"], e["artifact_name"]) for e in json.load(sys.stdin)]' |
             while read -r name art; do
-              apk=$(find "arts/$art" -name '*.apk' 2>/dev/null | sort | head -1)
+              dir=$(ls -d "arts/$art"-a* 2>/dev/null | sort -V | tail -1 || true)  # latest attempt
+              apk=''
+              [ -z "$dir" ] || apk=$(find "$dir" -name '*.apk' 2>/dev/null | sort | head -1 || true)
               if [ -z "$apk" ]; then echo "| $name | no APK (build failed?) | | | | | | |"; continue; fi
               b=$("$aapt2" dump badging "$apk" 2>/dev/null || true)
               pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<< "$b")

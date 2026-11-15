@@ -76,7 +76,9 @@ on:
       command: {type: string, default: 'android debug'}
       cache: {type: string, default: 'off'}
       apk_cache: {type: boolean, default: false}
-      artifact_name: {type: string, default: ''}  # empty = build-<run_number>; matrix.yml sets one per element
+      # empty = build-<run_number>; set (matrix.yml, one per element) = <artifact_name>-a<run_attempt>,
+      # so re-running failed jobs does not clash with the first attempt's artifact
+      artifact_name: {type: string, default: ''}
     outputs:
       artifact: {value: '${{ jobs.build.outputs.artifact }}'}
       apk_hit: {value: '${{ jobs.build.outputs.apk_hit }}'}
@@ -113,7 +115,7 @@ jobs:
       CACHE: ${{ inputs.cache }}
       APK_CACHE: ${{ inputs.apk_cache }}
     outputs:
-      artifact: ${{ inputs.artifact_name || format('build-{0}', github.run_number) }}
+      artifact: ${{ inputs.artifact_name && format('{0}-a{1}', inputs.artifact_name, github.run_attempt) || format('build-{0}', github.run_number) }}
       apk_hit: ${{ steps.apk_restore.outputs.cache-hit == 'true' }}
       cold: ${{ steps.out.outputs.cold }}
       image_digest: ${{ steps.out.outputs.image_digest }}
@@ -307,7 +309,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.artifact_name || format('build-{0}', github.run_number) }}
+          name: ${{ inputs.artifact_name && format('{0}-a{1}', inputs.artifact_name, github.run_attempt) || format('build-{0}', github.run_number) }}
           path: |
             build.log
             work/buildozer.spec
