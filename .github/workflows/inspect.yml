@@ -134,6 +134,10 @@ jobs:
       OUT: out
     outputs:
       shots: ${{ steps.res.outputs.shots }}
+      # short, fixed-vocabulary values for the shots job's card page (no free text from logs)
+      app_state: ${{ steps.res.outputs.app_state }}
+      target_sdk: ${{ steps.res.outputs.target_sdk }}
+      cold: ${{ steps.res.outputs.cold }}
     steps:
       - uses: actions/checkout@v4
 
@@ -248,6 +252,18 @@ jobs:
             fi
             echo "app state: $state"
           fi
+          # card one-liner pieces: a fixed word set, never log text
+          case "$state" in
+            '') short='static only' ;;
+            *'APP DIED'*) short='APP DIED' ;;
+            *'APP NOT INSTALLED'*) short='APP NOT INSTALLED' ;;
+            *'ADB LOST DEVICE'*) short='ADB LOST DEVICE' ;;
+            *'APP ALIVE'*) short='APP ALIVE' ;;
+            *) short='APP STATE UNKNOWN' ;;
+          esac
+          case "$COLD" in true) cold=COLD ;; n/a) cold='no build (apk_url)' ;; *) cold=WARM ;; esac
+          sdk="${TARGET_SDK:-}"; [[ "$sdk" =~ ^[0-9]{1,3}$ ]] || sdk='?'
+          { echo "app_state=$short"; echo "target_sdk=$sdk"; echo "cold=$cold"; } >> "$GITHUB_OUTPUT"
           {
             [ -z "$state" ] || { echo "$state"; echo; }
             echo "## inspect: $LABEL"
@@ -339,6 +355,31 @@ jobs:
           cp out/*.png pub/
           uv run --script tools/contact_sheet.py pub/sheet.png out/*.png
 
+      # One Discord embed card per run (docs/cards.md), served by GitHub Pages from branch `shots`.
+      # tools/card_page.py escapes every text value and allows only https URLs on known hosts.
+      - name: Card page (index.html for Discord embeds)
+        continue-on-error: true  # a card failure must not stop the screenshots push
+        env:
+          RUN_ID: ${{ github.run_id }}
+          LABEL: ${{ inputs.label }}
+          COLD: ${{ needs.inspect.outputs.cold }}
+          APP_STATE: ${{ needs.inspect.outputs.app_state }}
+          TARGET_SDK: ${{ needs.inspect.outputs.target_sdk }}
+        run: |
+          owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
+          raw="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/shots/shots/$RUN_ID"
+          pages_host="${owner,,}.github.io"
+          page="https://${pages_host}/${name}/shots/$RUN_ID/"
+          n=0; imgs=()
+          for f in $(cd pub && ls *.png | sort); do
+            [ "$f" = sheet.png ] || { n=$((n + 1)); imgs+=(--img "$raw/$f"); }
+          done
+          desc="$COLD run · $APP_STATE · targetSdk $TARGET_SDK · $n screenshot(s)"
+          uv run --no-project tools/card_page.py pub/index.html --allow-host "$pages_host" \
+            --title "${LABEL:-inspect run $RUN_ID}" --description "$desc" --image "$raw/sheet.png" --url "$page" "${imgs[@]}" \
+            --link "run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" --link "raw contact sheet=$raw/sheet.png"
+          echo "PAGE_URL=$page" >> "$GITHUB_ENV"
+
       - name: Push to branch shots (shots/<run_id>/)
         env:
           TOKEN: ${{ github.token }}
@@ -358,8 +399,11 @@ jobs:
             printf '# shots\nScreenshots pushed by inspect.yml runs (shots/<run_id>/). Orphan branch: no code.\n' > README.md
             git add README.md
           fi
+          # Pages serves the branch as-is (no Jekyll build) when .nojekyll exists at its root
+          [ -f .nojekyll ] || { : > .nojekyll; git add .nojekyll; }
           mkdir -p "shots/$RUN_ID"
           cp ../pub/*.png "shots/$RUN_ID/"
+          [ ! -f ../pub/index.html ] || cp ../pub/index.html "shots/$RUN_ID/"
           git add "shots/$RUN_ID"
           git commit -q -m "shots for run $RUN_ID"
           for _ in 1 2 3; do
@@ -375,12 +419,17 @@ jobs:
           base="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/shots/shots/$RUN_ID"
           # also to stdout, so `gh run view --log` shows the links without opening the summary
           echo "contact sheet: $base/sheet.png"
+          PAGE_URL="${PAGE_URL:-none (the Card page step failed)}"
+          echo "card page (post this bare in Discord; needs Pages on branch shots): $PAGE_URL"
           for f in $(cd pub && ls *.png | sort); do
             [ "$f" = sheet.png ] || echo "screenshot: $base/$f"
           done
           {
             echo '## screenshots'
             echo '**Software-rendered emulator (SwiftShader): GPU-driver / hardware bugs cannot show up here.**'
+            echo
+            echo "Discord card page (post this URL bare: one embed with title, result line and the sheet): $PAGE_URL"
+            echo "(enable Pages once: Settings -> Pages -> Deploy from a branch -> \`shots\`, / (root); the page appears ~1 min after the push. docs/cards.md)"
             echo
             echo "Contact sheet (paste this raw link in Discord, it unfurls as an image): $base/sheet.png"
             echo
