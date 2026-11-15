@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Edge-to-edge OPT-OUT for API 35 devices. OFF unless a build adds
+     `android.add_resources=android_res` (see docs/inspect.md). UNTESTED on Android.
+     p4a develop's _sdl_common AndroidManifest template hard-codes the ACTIVITY theme
+     `@style/KivySupportCutout` (defined in its strings.tmpl.xml; the activity theme wins over
+     android.apptheme), so this file redefines that style for values-v35 only. Its items copy the
+     template's output for the default android.display_cutout = never, plus the opt-out.
+     The attribute is ignored once targetSdk >= 36. -->
+<resources>
+    <style name="KivySupportCutout">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+    </style>
+</resources>
