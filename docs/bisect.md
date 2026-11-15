@@ -55,35 +55,41 @@ Logcat (tag `python`): `STUB bisect variant=N ui= extra=`, `STUB gl ...` (the GP
 label `Q-B bisect kit`, builds = this JSON (regenerate: `uv run --no-project stub_kivymd/ladder.py`):
 
 ```json
-[{"name":"bisect1","label":"Q-B bisect 1 Kivy plain","app":"stub_kivymd","app_config":{"variant":1},"extra":"package.name=bisect1;title=Bisect 1 Kivy plain;android.api=36"},{"name":"bisect2","label":"Q-B bisect 2 Kivy Fbo","app":"stub_kivymd","app_config":{"variant":2},"extra":"package.name=bisect2;title=Bisect 2 Kivy Fbo;android.api=36"},{"name":"bisect3","label":"Q-B bisect 3 Kivy BoxShadow","app":"stub_kivymd","app_config":{"variant":3},"extra":"package.name=bisect3;title=Bisect 3 Kivy BoxShadow;android.api=36"},{"name":"bisect4","label":"Q-B bisect 4 KivyMD plain","app":"stub_kivymd","app_config":{"variant":4},"extra":"package.name=bisect4;title=Bisect 4 KivyMD plain;android.api=36"},{"name":"bisect5","label":"Q-B bisect 5 KivyMD BoxShadow","app":"stub_kivymd","app_config":{"variant":5},"extra":"package.name=bisect5;title=Bisect 5 KivyMD BoxShadow;android.api=36"}]
+[{"name":"bisect1","label":"Q-B bisect 1 Kivy plain","app":"stub_kivymd","app_config":{"variant":1},"extra":"package.name=bisect1;title=Bisect 1 Kivy plain;android.api=36","add_archs":"x86_64"},{"name":"bisect2","label":"Q-B bisect 2 Kivy Fbo","app":"stub_kivymd","app_config":{"variant":2},"extra":"package.name=bisect2;title=Bisect 2 Kivy Fbo;android.api=36","add_archs":"x86_64"},{"name":"bisect3","label":"Q-B bisect 3 Kivy BoxShadow","app":"stub_kivymd","app_config":{"variant":3},"extra":"package.name=bisect3;title=Bisect 3 Kivy BoxShadow;android.api=36","add_archs":"x86_64"},{"name":"bisect4","label":"Q-B bisect 4 KivyMD plain","app":"stub_kivymd","app_config":{"variant":4},"extra":"package.name=bisect4;title=Bisect 4 KivyMD plain;android.api=36","add_archs":"x86_64"},{"name":"bisect5","label":"Q-B bisect 5 KivyMD BoxShadow","app":"stub_kivymd","app_config":{"variant":5},"extra":"package.name=bisect5;title=Bisect 5 KivyMD BoxShadow;android.api=36","add_archs":"x86_64"}]
 ```
 
 Everything else comes from `stub_kivymd/spec_overrides.txt`: p4a develop, android.ndk 29, archs
 arm64-v8a, Kivy 2.3.2, KivyMD master, `materialyoucolor==3.0.4` (p4a develop's recipe ships 2.0.10,
 which lacks `dynamiccolor.color_spec` that KivyMD master imports; `name==ver` makes p4a fetch the
-v3.0.4 release tarball). `extra` raises android.api to 36 (the reporter's). Cache `off` (cold, the
-only evidence). Artifacts `build-<run>-bisect1..5-a<attempt>` hold the debug APKs; the `facts` job
-prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages, ABI arm64-v8a).
+v3.0.4 release tarball). `extra` raises android.api to 36 (the reporter's). `"add_archs":"x86_64"`
+makes each APK FAT (arm64-v8a + x86_64): ONE file per variant serves both the x86_64 emulator gate
+(section 2, no rebuild) and the arm64 phone (Android picks the arm64 lib on the device). Cache `off`
+(cold, the only evidence). Artifacts `build-<run_number>-bisect1..5-a<attempt>` hold the debug APKs;
+the `facts` job prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages,
+ABIs `arm64-v8a x86_64`).
 
 ## 2. GATE: emulator smoke test of all 5 before anything is sent (Q-B acceptance)
-inspect.yml, one run per variant (it builds an arm64 + x86_64 twin of the same source): app empty
-(= stub_kivymd), app_config `{"variant": N}`, extra
-`package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,2060,30` (START = the bottom
-part of screen 1; measured on desktop at 1080x2400, density 2.625 = pixel_6: x 63..1017, y 1796..2337,
-center 540,2067), launch_wait 30.
+inspect.yml, one run per variant on the matrix run's OWN APK (no rebuild): `artifact_run` = the
+matrix run's ID (the number in its URL `.../actions/runs/<id>`), `artifact_name` =
+`build-<run_number>-bisectN-a<attempt>` (`<run_number>` = the matrix run's number `#n`, not its ID;
+highest attempt, as in section 3), app / repo / archs / extra / app_config empty (no build), taps
+`540,2060,30` (START = the bottom part of screen 1; measured on desktop at 1080x2400, density
+2.625 = pixel_6: x 63..1017, y 1796..2337, center 540,2067), launch_wait 30, label e.g.
+`Q-B gate N`. The run fails early if the artifact has no x86_64 lib (then the matrix lacked
+`add_archs`).
 PASS for a variant = the screenshot after the tap shows `DONE (variant N, 20/20)`, logcat has 20
 `created_` lines and 20 `frames=` lines, `app pid at end` is set, no Python traceback. All 5 must pass
 before the APKs go out; a failure here is our bug, not the phone's. Do not use `autotest` here (it
 stops the app after DONE, which reads like a crash). The software emulator CANNOT clear a GPU-driver
-crash: the gate only proves the app itself runs.
-BUDGET NOTE: these are 5 more builds on top of the original "3 runs for Q-B" budget (inspect cannot take a
-matrix artifact: `apk_url` needs a public https URL). Either accept the extra runs, or let the parent
-add an `add_archs: x86_64` matrix + an inspect input that reads a run's artifact.
+crash: the gate only proves the app itself runs. The phone gets the SAME fat APK the gate ran (same
+sha256 in both summaries); on the phone Android uses its arm64 lib, so the gate checks the Python
+side and the packaging, not the arm64 native code.
 
 ## 3. Send: what the helper does
 1. Open the matrix run on GitHub (logged in) and download, for each of bisect1..5, the artifact
    `build-<run>-bisectN-a<n>` with the HIGHEST `-a<n>` (after a re-run, `-a1` holds only the failed
-   attempt's log; same rule as the facts table) (zip files), unzip each, and take out the one `.apk` in each (`bisect1-0.1-arm64-v8a-debug.apk` ...).
+   attempt's log; same rule as the facts table) (zip files), unzip each, and take out the one `.apk` in each (fat: `bisect1-0.1-arm64-v8a_x86_64-debug.apk` ...,
+   name as buildozer writes it; the gate run printed its sha256).
 2. Send the 5 `.apk` files to the phone owner (chat attachment, cloud link), with the steps below.
 
 ## 4. Steps for the phone owner (copy as is)
@@ -121,6 +127,7 @@ Android version first.
 
 ## Untested
 - Nothing has run on GitHub or Android yet: matrix.yml (incl. the facts table and re-run naming),
+  inspect.yml's `artifact_run` / `artifact_name` path (cross-run artifact download),
   the materialyoucolor 3.0.4 recipe build, android.api 36, the APKs, the emulator gate taps (START
   position worked out from the layout, not measured), the install steps on Android 11.
 - Desktop only (Windows, kivy 2.3.2, KivyMD master, materialyoucolor 3.0.4, autotest): all 5 reach

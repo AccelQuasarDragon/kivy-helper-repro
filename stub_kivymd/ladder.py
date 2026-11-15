@@ -48,7 +48,8 @@ def resolve(variant: int, ui: str = '', extra: str = '') -> tuple[str, str]:
 
 def matrix(api: int = 36, label: str = 'Q-B bisect') -> list[dict]:
     """matrix.yml `builds` elements: one APK per variant, distinct package. Everything else (requirements
-    incl. the materialyoucolor pin, p4a develop, ndk 29, arm64) comes from stub_kivymd/spec_overrides.txt."""
+    incl. the materialyoucolor pin, p4a develop, ndk 29, arm64) comes from stub_kivymd/spec_overrides.txt;
+    add_archs adds x86_64 so each APK is fat (emulator gate + phone use the same file)."""
     out = []
     for n, (ui, ex) in enumerate(variants(), 1):
         title = f'Bisect {n} {name(ui, ex)}'
@@ -58,6 +59,9 @@ def matrix(api: int = 36, label: str = 'Q-B bisect') -> list[dict]:
             'app': 'stub_kivymd',
             'app_config': {'variant': n},
             'extra': f'package.name=bisect{n};title={title};android.api={api}',
+            # FAT APK (arm64 from spec_overrides.txt + x86_64): the SAME file runs on the x86_64
+            # emulator gate (inspect.yml artifact_run/artifact_name) and on the arm64 phone
+            'add_archs': 'x86_64',
         })
     return out
 

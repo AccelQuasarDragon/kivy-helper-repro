@@ -4,6 +4,8 @@ name: inspect apk
 # optionally a headless run on an x86_64 emulator with taps + screenshots + the runner's OWN logcat.
 # Screenshots are pushed to the orphan branch `shots` (shots/<run_id>/) so raw URLs unfurl in Discord.
 # The emulator renders in SOFTWARE (SwiftShader): GPU-driver / hardware bugs cannot show up here.
+# APK source (exactly one): apk_url, OR artifact_run + artifact_name (an APK artifact of another run of
+# THIS repo, e.g. a matrix.yml build; no rebuild), OR a build through build.yml (neither set).
 # Docs: docs/inspect.md. Every input reaches the shell through env: variables only.
 on:
   workflow_dispatch:
@@ -12,7 +14,13 @@ on:
         description: 'Run label (what question this answers)'
         default: 'inspect'
       apk_url:
-        description: 'https URL of an APK to inspect (set = no build; empty = build repo/app below)'
+        description: 'https URL of an APK to inspect (set = no build; empty = artifact below or build repo/app)'
+        default: ''
+      artifact_run:
+        description: 'Run ID (number in the run URL) of another run of THIS repo whose artifact holds the APK (set = no build)'
+        default: ''
+      artifact_name:
+        description: 'Artifact name in that run, e.g. build-12-bisect1-a1 (exactly one .apk inside)'
         default: ''
       repo:
         description: 'Public GitHub repo owner/name to build (empty = an app dir of THIS repo)'
@@ -57,7 +65,7 @@ on:
         description: 'Buildozer container image'
         default: 'ghcr.io/kivy/buildozer:latest'
 
-run-name: '${{ inputs.label }} | inspect | ${{ inputs.apk_url != '''' && ''apk_url'' || (inputs.repo || inputs.app || ''stub_kivymd'') }} | api ${{ inputs.api_level }} | cache ${{ inputs.cache }}'
+run-name: '${{ inputs.label }} | inspect | ${{ inputs.apk_url != '''' && ''apk_url'' || inputs.artifact_run != '''' && format(''artifact {0}'', inputs.artifact_name) || (inputs.repo || inputs.app || ''stub_kivymd'') }} | api ${{ inputs.api_level }} | cache ${{ inputs.cache }}'
 
 permissions:
   contents: read
@@ -68,14 +76,25 @@ jobs:
     outputs:
       app: ${{ steps.v.outputs.app }}
       add_archs: ${{ steps.v.outputs.add_archs }}
+      source: ${{ steps.v.outputs.source }}  # build | apk_url | artifact
+      artifact_run: ${{ steps.v.outputs.artifact_run }}
+      artifact_name: ${{ steps.v.outputs.artifact_name }}
     steps:
       - name: Validate inputs
         id: v
         shell: bash
         env:
           APK_URL: ${{ inputs.apk_url }}
+          ARTIFACT_RUN: ${{ inputs.artifact_run }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
           REPO: ${{ inputs.repo }}
+          REF: ${{ inputs.ref }}
           APP: ${{ inputs.app }}
+          ARCHS: ${{ inputs.archs }}
+          EXTRA: ${{ inputs.extra }}
+          APP_CONFIG: ${{ inputs.app_config }}
+          IMAGE: ${{ inputs.image }}
+          CACHE: ${{ inputs.cache }}
           API_LEVEL: ${{ inputs.api_level }}
           PROFILE: ${{ inputs.profile }}
           LAUNCH_WAIT: ${{ inputs.launch_wait }}
@@ -88,13 +107,33 @@ jobs:
           [[ "$PROFILE" =~ ^[A-Za-z0-9_.-]+$ ]] || fail 'bad profile'
           [[ "$LAUNCH_WAIT" =~ ^[0-9]{1,3}$ ]] || fail 'launch_wait must be whole seconds'
           [[ "$TAPS" =~ ^[0-9,.\;\ ]*$ ]] || fail 'taps: only x,y[,wait_s] steps separated by ;'
+          # APK source: exactly one of apk_url / artifact_run + artifact_name / a build
+          [ -z "$ARTIFACT_RUN" ] || [[ "$ARTIFACT_RUN" =~ ^[1-9][0-9]{0,19}$ ]] || fail 'artifact_run must be a numeric run ID (the number in .../actions/runs/<id>)'
+          [ -z "$ARTIFACT_NAME" ] || [[ "$ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,100}$ ]] || fail 'artifact_name: 1-100 of A-Z a-z 0-9 . _ -'
+          if [ -n "$ARTIFACT_RUN" ] && [ -z "$ARTIFACT_NAME" ]; then fail 'artifact_run needs artifact_name'; fi
+          if [ -z "$ARTIFACT_RUN" ] && [ -n "$ARTIFACT_NAME" ]; then fail 'artifact_name needs artifact_run'; fi
+          if [ -n "$APK_URL" ] && [ -n "$ARTIFACT_RUN" ]; then fail 'set apk_url OR artifact_run + artifact_name, not both'; fi
+          source=build
+          [ -z "$APK_URL" ] || source=apk_url
+          [ -z "$ARTIFACT_RUN" ] || source=artifact
+          if [ "$source" != build ]; then
+            # build inputs would be silently ignored: refuse them instead
+            set_build=''
+            for v in REPO APP ARCHS EXTRA APP_CONFIG; do [ -z "${!v}" ] || set_build="$set_build ${v,,}"; done
+            [ "$REF" = 'HEAD' ] || [ -z "$REF" ] || set_build="$set_build ref"
+            # no build = no image and no cache: a non-default value would be claimed in the run name / summary
+            [ "$IMAGE" = 'ghcr.io/kivy/buildozer:latest' ] || [ -z "$IMAGE" ] || set_build="$set_build image"
+            [ "$CACHE" = 'off' ] || [ -z "$CACHE" ] || set_build="$set_build cache"
+            [ -z "$set_build" ] || fail "$source is set (= no build): leave the build inputs empty / default:$set_build"
+          fi
+          { echo "source=$source"; echo "artifact_run=$ARTIFACT_RUN"; echo "artifact_name=$ARTIFACT_NAME"; } >> "$GITHUB_OUTPUT"
           if [ -n "$REPO" ]; then app="${APP:-.}"; else app="${APP:-stub_kivymd}"; fi
           echo "app=$app" >> "$GITHUB_OUTPUT"
           if [ "$STATIC_ONLY" = 'true' ]; then echo 'add_archs=' >> "$GITHUB_OUTPUT"; else echo 'add_archs=x86_64' >> "$GITHUB_OUTPUT"; fi
 
   build:
     needs: check
-    if: inputs.apk_url == ''
+    if: needs.check.outputs.source == 'build'
     uses: ./.github/workflows/build.yml
     with:
       label: ${{ inputs.label }}
@@ -109,9 +148,72 @@ jobs:
       cache: ${{ inputs.cache }}
       apk_cache: ${{ inputs.cache != 'off' }}
 
+  # artifact source only: the ONE job with `actions: read` (reading another run's artifacts). It checks
+  # the artifact (exactly one .apk; an x86_64 lib unless static_only) and re-uploads that APK as an
+  # artifact of THIS run, so the inspect job takes it by the same path as a built APK, permission-free.
+  fetch:
+    needs: check
+    if: needs.check.outputs.source == 'artifact'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      artifact: apk-input-${{ github.run_number }}-a${{ github.run_attempt }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the artifact of the other run
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.check.outputs.artifact_name }}
+          run-id: ${{ needs.check.outputs.artifact_run }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: srcart
+
+      - name: Explain a failed download
+        if: failure()
+        env:
+          ARTIFACT_RUN: ${{ needs.check.outputs.artifact_run }}
+          ARTIFACT_NAME: ${{ needs.check.outputs.artifact_name }}
+        run: |
+          msg="could not download artifact $ARTIFACT_NAME of run $ARTIFACT_RUN: artifact_run must be the run ID (the long number in the run URL), not the run number; artifacts expire after 14 days; the artifact name must match build-<run_number>-<name>-a<attempt>"
+          echo "::error::$msg"
+          echo "**FETCH FAILED:** $msg" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Exactly one APK; x86_64 lib for the emulator
+        env:
+          STATIC_ONLY: ${{ inputs.static_only }}
+          ARTIFACT_RUN: ${{ needs.check.outputs.artifact_run }}
+          ARTIFACT_NAME: ${{ needs.check.outputs.artifact_name }}
+        run: |
+          fail() { echo "::error::$1"; echo "**FETCH FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          mapfile -t apks < <(find srcart -type f -name '*.apk' | sort)
+          [ "${#apks[@]}" -eq 1 ] || fail "artifact $ARTIFACT_NAME of run $ARTIFACT_RUN holds ${#apks[@]} .apk files (need exactly 1)"
+          apk="${apks[0]}"
+          unzip -Z1 "$apk" > apk_list.txt 2>/dev/null || fail "$(basename "$apk") is not a valid zip/APK"
+          abis=$(sed -n 's|^lib/\([^/]*\)/.*|\1|p' apk_list.txt | sort -u | paste -sd' ' -)
+          echo "APK $(basename "$apk"), native ABIs: ${abis:-none}"
+          if [ "$STATIC_ONLY" != 'true' ] && ! grep -qw x86_64 <<< "$abis"; then
+            fail "no x86_64 lib in $(basename "$apk") (ABIs: ${abis:-none}); the emulator is x86_64: build it with add_archs x86_64, or set static_only"
+          fi
+          mkdir -p apkin && cp "$apk" apkin/
+
+      - name: Re-upload the APK as an artifact of this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-input-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: apkin/*.apk
+          retention-days: 3
+          if-no-files-found: error
+
   inspect:
-    needs: [check, build]
-    if: always() && needs.check.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    needs: [check, build, fetch]
+    if: >-
+      always() && needs.check.result == 'success'
+      && (needs.build.result == 'success' || needs.build.result == 'skipped')
+      && (needs.fetch.result == 'success' || needs.fetch.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     defaults:
@@ -129,8 +231,11 @@ jobs:
       APK_HIT: ${{ needs.build.outputs.apk_hit || 'n/a' }}
       COLD: ${{ needs.build.outputs.cold || 'n/a' }}
       CACHES: ${{ needs.build.outputs.caches || 'n/a' }}
-      IMAGE_DIGEST: ${{ needs.build.outputs.image_digest || 'n/a (apk_url)' }}
-      SRC_ID: ${{ needs.build.outputs.src_id || 'n/a (apk_url)' }}
+      IMAGE_DIGEST: ${{ needs.build.outputs.image_digest || 'n/a (APK input, no build)' }}
+      SRC_ID: ${{ needs.build.outputs.src_id || 'n/a (APK input, no build)' }}
+      SOURCE: ${{ needs.check.outputs.source }}
+      ARTIFACT_RUN: ${{ needs.check.outputs.artifact_run }}
+      ARTIFACT_NAME: ${{ needs.check.outputs.artifact_name }}
       OUT: out
     outputs:
       shots: ${{ steps.res.outputs.shots }}
@@ -138,18 +243,20 @@ jobs:
       app_state: ${{ steps.res.outputs.app_state }}
       target_sdk: ${{ steps.res.outputs.target_sdk }}
       cold: ${{ steps.res.outputs.cold }}
+      source: ${{ steps.res.outputs.source }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get APK (build artifact)
-        if: inputs.apk_url == ''
+      # build: build.yml's artifact; artifact source: the fetch job's re-upload (same path)
+      - name: Get APK (artifact of this run)
+        if: needs.check.outputs.source != 'apk_url'
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.build.outputs.artifact }}
+          name: ${{ needs.build.outputs.artifact || needs.fetch.outputs.artifact }}
           path: apkdl
 
       - name: Get APK (apk_url)
-        if: inputs.apk_url != ''
+        if: needs.check.outputs.source == 'apk_url'
         run: |
           mkdir -p apkdl
           curl -fsSL --proto '=https' --max-filesize 314572800 -o apkdl/download.apk "$APK_URL"
@@ -225,7 +332,7 @@ jobs:
           echo "shots=$shots" >> "$GITHUB_OUTPUT"
           rd() { [ -f "$OUT/$1" ] && tr -d '\r' < "$OUT/$1" || echo "n/a"; }
           if [ "$COLD" = 'true' ]; then verdict='**COLD RUN (nothing restored from any cache): counts as evidence**';
-          elif [ "$COLD" = 'n/a' ]; then verdict='no build (apk_url): the APK itself is the input';
+          elif [ "$COLD" = 'n/a' ]; then verdict='APK input (no build): the APK itself is the input';
           else verdict='**WARM RUN (a cache was restored): not evidence (CLAUDE.md)**'; fi
           # App state at the end, as the FIRST summary line: a green workflow must not hide a dead app.
           state=''
@@ -261,16 +368,23 @@ jobs:
             *'APP ALIVE'*) short='APP ALIVE' ;;
             *) short='APP STATE UNKNOWN' ;;
           esac
-          case "$COLD" in true) cold=COLD ;; n/a) cold='no build (apk_url)' ;; *) cold=WARM ;; esac
+          case "$COLD" in true) cold='COLD run' ;; n/a) cold='APK input (no build)' ;; *) cold='WARM run' ;; esac
           sdk="${TARGET_SDK:-}"; [[ "$sdk" =~ ^[0-9]{1,3}$ ]] || sdk='?'
-          { echo "app_state=$short"; echo "target_sdk=$sdk"; echo "cold=$cold"; } >> "$GITHUB_OUTPUT"
+          # source for the card: validated inputs only (run ID digits, artifact name charset)
+          case "$SOURCE" in artifact) src="from run $ARTIFACT_RUN artifact $ARTIFACT_NAME" ;; apk_url) src='from apk_url' ;; *) src='' ;; esac
+          { echo "app_state=$short"; echo "target_sdk=$sdk"; echo "cold=$cold"; echo "source=$src"; } >> "$GITHUB_OUTPUT"
           {
             [ -z "$state" ] || { echo "$state"; echo; }
             echo "## inspect: $LABEL"
             echo
             echo '> **The emulator renders in SOFTWARE (SwiftShader), not on a real GPU (e.g. Adreno / Mali). GPU-driver and hardware bugs CANNOT show up here: a clean run here does not clear them.**'
             echo
-            echo "- APK: \`$APK_NAME\` sha256 \`$APK_SHA\` (from: ${APK_URL:+apk_url}${APK_URL:-build \`$SRC_ID\`})"
+            case "$SOURCE" in
+              apk_url) from='apk_url' ;;
+              artifact) from="artifact \`$ARTIFACT_NAME\` of run [$ARTIFACT_RUN](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$ARTIFACT_RUN) (no rebuild)" ;;
+              *) from="build \`$SRC_ID\`" ;;
+            esac
+            echo "- APK: \`$APK_NAME\` sha256 \`$APK_SHA\` (from: $from)"
             echo "- build image: \`$IMAGE_DIGEST\`"
             echo "- $verdict"
             echo "- cache input: \`$CACHE\`; per cache: $CACHES"
@@ -329,7 +443,7 @@ jobs:
 
   # The ONLY job with write access: it pushes the PNGs to the orphan branch `shots`.
   shots:
-    needs: inspect
+    needs: [check, inspect]
     if: always() && needs.inspect.outputs.shots == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -365,6 +479,8 @@ jobs:
           COLD: ${{ needs.inspect.outputs.cold }}
           APP_STATE: ${{ needs.inspect.outputs.app_state }}
           TARGET_SDK: ${{ needs.inspect.outputs.target_sdk }}
+          SRC: ${{ needs.inspect.outputs.source }}
+          ARTIFACT_RUN: ${{ needs.check.outputs.artifact_run }}
         run: |
           owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
           raw="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/shots/shots/$RUN_ID"
@@ -372,12 +488,14 @@ jobs:
           page="https://${pages_host}/${name}/shots/$RUN_ID/"
           n=0; imgs=()
           for f in $(cd pub && ls *.png | sort); do
-            [ "$f" = sheet.png ] || { n=$((n + 1)); imgs+=(--img "$raw/$f"); }
+            [ "$f" = sheet.png ] || { n=$((n + 1)); imgs+=("--img=$raw/$f"); }
           done
-          desc="$COLD run · $APP_STATE · targetSdk $TARGET_SDK · $n screenshot(s)"
+          desc="$COLD · $APP_STATE · targetSdk $TARGET_SDK · $n screenshot(s)${SRC:+ · $SRC}"
+          src_link=()
+          [ -z "$ARTIFACT_RUN" ] || src_link=("--link=source run (APK artifact)=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$ARTIFACT_RUN")
           uv run --no-project tools/card_page.py pub/index.html --allow-host "$pages_host" \
-            --title "${LABEL:-inspect run $RUN_ID}" --description "$desc" --image "$raw/sheet.png" --url "$page" "${imgs[@]}" \
-            --link "run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" --link "raw contact sheet=$raw/sheet.png"
+            --title="${LABEL:-inspect run $RUN_ID}" --description="$desc" --image="$raw/sheet.png" --url="$page" "${imgs[@]}" \
+            --link="run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/$RUN_ID" --link="raw contact sheet=$raw/sheet.png" "${src_link[@]}"
           echo "PAGE_URL=$page" >> "$GITHUB_ENV"
 
       - name: Push to branch shots (shots/<run_id>/)
@@ -420,7 +538,7 @@ jobs:
           # also to stdout, so `gh run view --log` shows the links without opening the summary
           echo "contact sheet: $base/sheet.png"
           PAGE_URL="${PAGE_URL:-none (the Card page step failed)}"
-          echo "card page (post this bare in Discord; needs Pages on branch shots): $PAGE_URL"
+          echo "card page (post this bare in Discord once it loads in a browser; Pages deploys ~1+ min after the push): $PAGE_URL"
           for f in $(cd pub && ls *.png | sort); do
             [ "$f" = sheet.png ] || echo "screenshot: $base/$f"
           done
@@ -429,7 +547,7 @@ jobs:
             echo '**Software-rendered emulator (SwiftShader): GPU-driver / hardware bugs cannot show up here.**'
             echo
             echo "Discord card page (post this URL bare: one embed with title, result line and the sheet): $PAGE_URL"
-            echo "(enable Pages once: Settings -> Pages -> Deploy from a branch -> \`shots\`, / (root); the page appears ~1 min after the push. docs/cards.md)"
+            echo "(Pages deploys ~1+ minute after the push: open the URL in a browser first and post it only once it loads; posted too early, Discord caches an empty embed: post it again with \`?1\` appended. Enable Pages once: Settings -> Pages -> Deploy from a branch -> \`shots\`, / (root). docs/cards.md)"
             echo
             echo "Contact sheet (paste this raw link in Discord, it unfurls as an image): $base/sheet.png"
             echo

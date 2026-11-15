@@ -4,9 +4,20 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
 (Actions tab -> "inspect apk" -> Run workflow, or workflow_dispatch via the API / `gh workflow run`).
 
 ## What it does
-1. **Get an APK**: download `apk_url`, OR build one through `build.yml` (reused as a
-   `workflow_call`): a public `repo` + `ref`, or an app dir of this repo (`app`, default `stub_kivymd`).
+1. **Get an APK** (exactly one source; the `check` job refuses mixes): download `apk_url`, OR take
+   the APK artifact of ANOTHER run of this repo (`artifact_run` + `artifact_name`, e.g. a matrix.yml
+   build; no rebuild), OR build one through `build.yml` (reused as a `workflow_call`): a public
+   `repo` + `ref`, or an app dir of this repo (`app`, default `stub_kivymd`).
    A build ADDS `x86_64` to the app's `android.archs` (the emulator is x86_64), unless `static_only`.
+   With `apk_url` or an artifact, the build inputs (repo, ref, app, archs, extra, app_config, image, cache) must
+   stay empty / default (a set one would be silently ignored, so the run fails instead).
+   **Artifact source**: the `fetch` job (the ONLY job with `actions: read`) downloads the artifact
+   with `actions/download-artifact` (`run-id`, this repository, the run's own token), requires
+   exactly one `.apk` in it and, unless `static_only`, an x86_64 lib (`lib/x86_64/`; fails with a
+   clear message otherwise), and re-uploads that APK as `apk-input-<n>-a<attempt>` (kept 3 days: enough to
+   re-run a failed inspect job) so the inspect job reads it by the same path as a built APK.
+   Artifacts expire after 14 days. A failed download prints why (run ID vs run number, expiry, name).
+   No build also means `image` and `cache` must stay default (`cache: off`).
 2. **Static facts** (always): `aapt2 dump badging` (package, targetSdk, minSdk, ABIs, permissions),
    the APK sha256, and the bundled Python packages (`tools/apk_pkgs.py`: libpython version,
    `*.dist-info` / `*.egg-info` found in the APK and in archives nested in it, plus site-packages
@@ -36,6 +47,8 @@ python_packages.md, install/launch output).
 |---|---|
 | label | run name: what question this answers |
 | apk_url | https URL of an APK; set = no build |
+| artifact_run | run ID (the number in `.../actions/runs/<id>`) of another run of THIS repo; set = no build; digits only |
+| artifact_name | that run's artifact holding the APK, e.g. `build-<run_number>-bisect1-a1` (matrix.yml) or `build-<run_number>` (build.yml); `A-Z a-z 0-9 . _ -`, 1-100; needs artifact_run |
 | repo / ref | public GitHub repo `owner/name` + branch/tag/commit to build (empty repo = this repo) |
 | app | app dir holding `main.py`: in this repo (default `stub_kivymd`) or in `repo` (default `.`) |
 | archs | `android.archs` (empty = the app's own); `x86_64` is appended unless static_only |
@@ -117,7 +130,10 @@ label `stub_kivymd edge-to-edge api35`, app empty, taps `540,1200,4;540,1200,4`,
    follows the actual hits, not the `cache` input: `cache: sdk` whose key missed is COLD (the SDK /
    NDK were downloaded fresh). The summary prints each cache as `HIT` / `MISS` / `not used` /
    `skipped (apk hit)` with its exact key. (Before 2026-11-15 any `cache` != `off` printed WARM even
-   on a total miss.) `apk_url` runs say "no build": the APK itself is the input.
+   on a total miss.) `apk_url` / artifact runs say `APK input (no build)`: the APK itself is the
+   input. The summary's `from:` names the source (`apk_url`, `artifact <name> of run <id>` with a
+   link, or `build <source id>`); the card description ends with `from run <id> artifact <name>`
+   and links the source run.
 
 ## Limits
 - **No GPU / hardware bugs**: the emulator renders with SwiftShader (software), not e.g. Adreno
@@ -139,8 +155,10 @@ never put reporter names in labels, commits or docs. Screenshots land in a publi
 - `workflow_dispatch` only: only collaborators can start it. No `pull_request_target` /
   `issue_comment` / other triggers strangers can fire.
 - Every input reaches the shell via `env:` (never `${{ inputs.x }}` inside `run:`); the `check`
-  job validates apk_url (one https URL), api_level, profile, launch_wait, taps before any build.
+  job validates apk_url (one https URL), artifact_run (digits), artifact_name (strict charset),
+  api_level, profile, launch_wait, taps before any build.
 - `contents: write` only on the `shots` job; the push uses the run's own `GITHUB_TOKEN`.
+  `actions: read` only on the `fetch` job (artifact source), pinned to `github.repository`.
 
 ## Design decisions (dated)
 - 2026-11-14: spec approved by the author; build reused via `workflow_call` on build.yml (one
@@ -151,5 +169,8 @@ never put reporter names in labels, commits or docs. Screenshots land in a publi
   is WARM. Author: "can't we cache the apk".
 - 2026-11-14: screenshots as one contact sheet on an orphan branch so a raw link unfurls in Discord
   (author: "can't we do something where the discord embed is the screenshots").
+- 2026-11-15: `artifact_run` + `artifact_name` = any APK artifact of a run of this repo (not a
+  matrix-only input), so the Q-B gate runs on the matrix's own fat APKs without 5 rebuilds; a
+  separate `fetch` job re-uploads it so `actions: read` stays off the inspect job.
 - 2026-11-14: generic mechanisms over one-offs: `spec_overrides.txt` per app dir, `app_config`
   JSON for any app, `key+=item` in patch_spec.py, `add_archs` in build.yml.
