@@ -22,6 +22,8 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    (`https://raw.githubusercontent.com/<owner>/<repo>/shots/shots/<run_id>/sheet.png`) and embeds
    the sheet; the same URLs are echoed to the step log (`gh run view --log` shows them). A raw
    PNG link pasted in Discord unfurls as an inline image.
+   It also writes a Discord **card page** (`shots/<run_id>/index.html`, served by GitHub Pages:
+   one embed with title + result line + sheet): see [cards.md](cards.md).
 5. **Summary**: inputs, build image digest, emulator image + fingerprint, cache level + hit,
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.
