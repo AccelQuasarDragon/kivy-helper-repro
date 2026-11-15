@@ -2,6 +2,7 @@
 
 PUBLIC REPO: everything here is world-readable. No local paths, usernames, emails, tokens, chat
 links or names of the people whose reports we reproduce. Run the privacy check below before every push.
+A public repo or GitHub handle we reproduce may be named; never their private data (device logs, .env, keys, Bluetooth/device IDs).
 
 ## What this is
 A generator for buildozer build reproductions: a few form inputs -> a buildozer.spec -> a build on
