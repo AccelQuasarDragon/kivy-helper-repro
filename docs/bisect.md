@@ -5,37 +5,42 @@ rule), `stub_kivymd/bisect_app.py` (the app), `.github/workflows/matrix.yml` (on
 
 ## Why
 A KivyMD app crashes in the GPU driver (native SIGSEGV, nested Fbo draw) about 110 ms into a switch
-to a screen shown for the first time: the incoming screen's Fbos being created and first rendered.
+to a screen shown for the first time (an earlier switch to another screen survived). HYPOTHESIS
+under test (not established): the ARRIVING screen's Fbos being created and first rendered trigger it.
 Emulators render in software and cannot show a driver crash, so the phone owner runs 5 small APKs.
 Each adds one factor; the FIRST one that crashes names the trigger.
 
 ## The ladder (one generator)
 `ladder.py`: a variant is a point (ui, extra); variants 1..5 = (kivy, kivymd) x (plain, fbo, shadow)
 in that order, minus (kivymd, fbo) (kept out to stay at 5; set `ui` / `extra` directly to run it).
-Screen 2 holds 3 cards: Kivy `Button`s (ui kivy) or elevated `MDCard`s (ui kivymd).
+BOTH screens hold the variant's content: 3 cards, Kivy `Button`s (ui kivy) or elevated `MDCard`s
+(ui kivymd), plus the Fbo view in variant 2. Screen 1 also has START at the bottom.
 
-| # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | made per switch (desktop) | nudged per frame |
+| # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | made per switch (desktop) | Fbo owners nudged per frame |
 |---|---|---|---|---|---|
 | 1 | Kivy plain | org.khr.bisect1 | plain Kivy ScreenManager + SlideTransition | 4 widgets, 0 BoxShadow, 0 Fbo | 0 |
-| 2 | Kivy Fbo | org.khr.bisect2 | 1 + one raw Kivy Fbo | 5 widgets, 0 BoxShadow, 1 Fbo | 2 |
-| 3 | Kivy BoxShadow | org.khr.bisect3 | 1 + 3 widgets with Kivy BoxShadow | 4 widgets, 3 BoxShadow, 3 Fbo | 6 |
+| 2 | Kivy Fbo | org.khr.bisect2 | 1 + one raw Kivy Fbo | 5 widgets, 0 BoxShadow, 1 Fbo | 1 |
+| 3 | Kivy BoxShadow | org.khr.bisect3 | 1 + 3 widgets with Kivy BoxShadow | 4 widgets, 3 BoxShadow, 3 Fbo | 3 |
 | 4 | KivyMD plain | org.khr.bisect4 | MDScreenManager + MDSharedAxis, elevated cards, shadows OFF | 7 widgets, 0 BoxShadow, 0 Fbo | 0 |
-| 5 | KivyMD BoxShadow | org.khr.bisect5 | 4 with stock shadows ON | 7 widgets, 3 BoxShadow, 3 Fbo | 6 |
+| 5 | KivyMD BoxShadow | org.khr.bisect5 | 4 with stock shadows ON | 7 widgets, 3 BoxShadow, 3 Fbo | 3 |
 
 The same stress in every variant, so the ladder stays one factor at a time:
-- REBUILD: just before EVERY switch (both directions), screen 2's cards (+ Fbo view) are thrown away
-  and built fresh, so each of the 20 transitions creates and first-renders new Fbos / BoxShadows /
-  MDCards: 20 chances at the "first visit" moment instead of one.
-- NUDGE: during each transition (every frame until the transition's on_complete), every Fbo in
-  screen 2 gets `ask_update()`, every BoxShadow a +-0.01 `blur_radius` change (re-sets its Fbo's
-  uniforms), the Fbo view moves its disc. Nothing to nudge in variants 1 and 4.
+- REBUILD: just before EVERY switch, the ARRIVING screen's cards (+ Fbo view) are thrown away and
+  built fresh, so each of the 20 transitions creates and first-renders new Fbos / BoxShadows /
+  MDCards on the arriving screen: 20 tries at the hypothesised moment instead of one. The counts
+  are the same on all 20 switches (10 arriving on screen 2, 10 on screen 1).
+- NUDGE: during each transition (every frame until the transition's on_complete), each Fbo OWNER on
+  the arriving screen is nudged once: the Fbo view moves its disc + `ask_update()` on its Fbo; a
+  BoxShadow gets a +-0.01 `blur_radius` change, which re-sets its Fbo's uniforms and is ASSUMED
+  (unmeasured, see Untested) to re-render it; a BoxShadow's own Fbo is not nudged a second time.
+  Nothing to nudge in variants 1 and 4.
 
 Variants 1-3 never import kivymd (`kivymd_loaded=False` in the done line); all 5 APKs have the same
 requirements and differ only by `app_config` + package name / title. Shadows OFF = stubkit's
 Factory swap (no BoxShadow, no BoxShadow Fbo at all). START, the counter and the titles are plain
 Kivy widgets in every variant.
 
-What the app does: screen 1 shows `Bisect N <name>` and a big START. One tap = 20 automatic switches
+What the app does: screen 1 shows `Bisect N <name>`, the cards and a big START. One tap = 20 automatic switches
 screen 1 <-> screen 2, each after the transition's duration + 0.3 s (Slide 0.7 s, MDSharedAxis
 0.5 s); both screens show a big `switch k/20` counter; at the end `DONE (variant N, 20/20)`.
 Logcat (tag `python`): `STUB bisect variant=N ui= extra=`, `STUB gl ...` (the GPU line), per switch
@@ -60,7 +65,7 @@ prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages,
 ## 2. GATE: emulator smoke test of all 5 before anything is sent (QUEUE.md acceptance)
 inspect.yml, one run per variant (it builds an arm64 + x86_64 twin of the same source): app empty
 (= stub_kivymd), app_config `{"variant": N}`, extra
-`package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,1900,30` (START = the bottom
+`package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,2060,30` (START = the bottom
 part of screen 1 on pixel_6), launch_wait 30.
 PASS for a variant = the screenshot after the tap shows `DONE (variant N, 20/20)`, logcat has 20
 `created_` lines and 20 `frames=` lines, `app pid at end` is set, no Python traceback. All 5 must pass
@@ -72,8 +77,9 @@ matrix artifact: `apk_url` needs a public https URL). Either accept the extra ru
 add an `add_archs: x86_64` matrix + an inspect input that reads a run's artifact.
 
 ## 3. Send: what the helper does
-1. Open the matrix run on GitHub (logged in), download the 5 artifacts `build-<run>-bisect1..5-a1`
-   (zip files), unzip each, and take out the one `.apk` in each (`bisect1-0.1-arm64-v8a-debug.apk` ...).
+1. Open the matrix run on GitHub (logged in) and download, for each of bisect1..5, the artifact
+   `build-<run>-bisectN-a<n>` with the HIGHEST `-a<n>` (after a re-run, `-a1` holds only the failed
+   attempt's log; same rule as the facts table) (zip files), unzip each, and take out the one `.apk` in each (`bisect1-0.1-arm64-v8a-debug.apk` ...).
 2. Send the 5 `.apk` files to the phone owner (chat attachment, cloud link), with the steps below.
 
 ## 4. Steps for the phone owner (copy as is)
@@ -101,7 +107,9 @@ Use the first variant whose answer is CRASH DURING SWITCHES:
 - first crash at 3 (or at 5 with 4 clean) = BoxShadow, the leading theory; workaround = shadows off /
   elevation 0 on that phone. First crash at 2 = any Fbo. Crash at 1 = not Fbo at all (Kivy GL or the
   driver on any redraw). Crash at 4 but not 3 = KivyMD's transition / widgets without shadows.
-- a low switch number (1-2) = the first-visit create + render; a later one = a repeated / timing effect.
+- the switch number: every switch creates and first-renders new Fbos, so a crash at switch 1 is not
+  more "first visit" than at switch 7; switch 1 only adds the first-ever GL work of the process (e.g.
+  shader compiles). A crash only after many switches points to a repeated / timing / memory effect.
 - No crash anywhere = the user's app has another factor (ask for their KV).
 CLOSED BEFORE START is a different failure (startup: Python, imports, GL context), not a switch
 crash: it does not count as a ladder answer; check the gate run of that variant and ask for the
@@ -115,4 +123,7 @@ Android version first.
   20/20 + DONE with the per-switch numbers in the table above. A desktop pass does not prove the APK
   imports.
 - Whether the nudge drives the same driver path as KivyMD's own BoxShadow updates is a judgement,
-  not a measurement.
+  not a measurement; that a `blur_radius` change makes BoxShadow's Fbo re-render (it re-sets the Fbo's
+  uniforms) is read from Kivy's source, not measured (no per-frame render counter).
+- The hypothesis itself (arriving screen's Fbo create + first render) comes from one crash log; the
+  ladder tests it, it does not assume it is right.
