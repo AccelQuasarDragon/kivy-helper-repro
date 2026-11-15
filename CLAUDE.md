@@ -55,25 +55,3 @@ Every summary must say which cache level ran and whether it was hit.
     git log --all --format='%an <%ae> | %cn <%ce>' | sort -u   # only the GitHub noreply address
 Expected: no hits except `/home/user` (the container's own user) and the noreply author.
 (A local fetch of the `shots` branch also shows the github-actions[bot] noreply address: expected.)
-
-## Log
-- 2026-11-12: created; run #1 = pip `capture_logging` ImportError repro (kivy only, p4a master, x86).
-- 2026-11-12 results (all cold, ghcr.io/kivy/buildozer:latest, x86):
-  - #1 master, 2 archs: FAIL `capture_logging`. Arch 1 ok (venv pip 25.3 -> 26.3); arch 2 reruns
-    `python -m venv venv` on the same venv, then `pip install -U pip` crashes on mixed pip files.
-    NOT reporter stale state: clean runner. Did not reproduce on Windows (venv rerun kept pip 26.3 intact),
-    so the file-mixing step is Linux/container-specific, mechanism unconfirmed.
-  - #2 master, arm64 only: no capture_logging; FAILS later on the known charset-normalizer cp314 android wheel bug.
-  - #3 develop, 2 archs (api 36, ndk 29): PASS = the fix to recommend.
-  - #4 cache test (arm64, master): failed (charset bug), so nothing saved; redone on develop.
-  - #5 master, arm64 + `charset-normalizer==2.1.1`: FAIL, same charset wheel error; p4a's resolver adds a direct
-    URL to the 3.5.2 android wheel that overrides the pin. No simple master workaround: answer = develop.
-  - #6 cache test 1/2 (develop, arm64, full): build PASS, sdk + full caches saved (~1.7 GB each); Summary step
-    crashed (grep no-match under pipefail), fixed.
-  - #7 cache test 2/2 (same inputs as #6): both caches HIT (16 s restore each), build 63 s vs ~16 min cold,
-    saves skipped, Summary ok. Warm runs: ~4 min total. Cache input verified end to end.
-- 2026-11-12: release request posted upstream: kivy/python-for-android#3411 (cites runs #1, #2, #3, #5 + runs/
-  excerpts at commit 50bea6c: keep runs/ files unchanged so the line links stay valid). Related: #3364, #3366.
-- 2026-11-14: inspect.yml added (author-approved spec); build.yml became reusable (workflow_call) with
-  repo/ref/app/add_archs/app_config/apk_cache inputs, all inputs via env. stub_kivymd checked on desktop only.
-  Runs: none yet (no gh CLI on the build machine; dispatch pending).
