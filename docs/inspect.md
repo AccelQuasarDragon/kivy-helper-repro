@@ -20,7 +20,8 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    contact sheet (`tools/contact_sheet.py`, Pillow via uv) and pushes it plus every PNG to the
    orphan branch `shots` under `shots/<run_id>/`. Its summary prints the raw URLs
    (`https://raw.githubusercontent.com/<owner>/<repo>/shots/shots/<run_id>/sheet.png`) and embeds
-   the sheet. A raw PNG link pasted in Discord unfurls as an inline image.
+   the sheet; the same URLs are echoed to the step log (`gh run view --log` shows them). A raw
+   PNG link pasted in Discord unfurls as an inline image.
 5. **Summary**: inputs, build image digest, emulator image + fingerprint, cache level + hit,
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.

@@ -369,6 +369,11 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           base="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/shots/shots/$RUN_ID"
+          # also to stdout, so `gh run view --log` shows the links without opening the summary
+          echo "contact sheet: $base/sheet.png"
+          for f in $(cd pub && ls *.png | sort); do
+            [ "$f" = sheet.png ] || echo "screenshot: $base/$f"
+          done
           {
             echo '## screenshots'
             echo '**Software-rendered emulator (SwiftShader): GPU-driver / hardware bugs cannot show up here.**'
