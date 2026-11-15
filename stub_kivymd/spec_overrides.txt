@@ -2,11 +2,13 @@
 # Mimics a reported app: Kivy 2.3.2, KivyMD 2.0.1.dev0 (git master), p4a develop. Python = p4a develop's default
 # (the report says 3.14; unverified here: read the libpython line of the inspect summary).
 # materialyoucolor pinned: p4a develop's recipe ships 2.0.10, KivyMD master needs >=3.0.3 (run 43698742746 died at import).
-# materialshapes (needs pycairo) is left out on purpose: only kivymd fitimage/loadingindicator import it.
+# materialshapes + pycairo are needed: the first touch reaches them (MDCard hover/state layer -> kivymd.uix.list ->
+# fitimage -> materialshapes; without them every tap crashed the app, 7 cold inspect runs 2026-11-15).
+# Built + ran with p4a develop in run 43733325270.
 title = StubKivyMD
 package.name = stubkivymd
 package.domain = org.khr
-requirements = python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow
+requirements = python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow,materialshapes,pycairo
 source.include_exts = py,png,jpg,kv,atlas,json
 p4a.branch = develop
 android.api = 35

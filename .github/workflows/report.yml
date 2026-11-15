@@ -1,0 +1,128 @@
+name: report card
+
+# Publish ONE multi-run Discord card page (docs/cards.md) from a JSON spec, without a local push:
+# render (tools/card_page.py --spec, read-only job) -> publish (tools/push_shots.sh, the ONLY job here
+# with contents: write) to shots/<slug>/index.html on branch `shots`, served by GitHub Pages.
+# workflow_dispatch ONLY (collaborators). Every input reaches the shell through env: variables only.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Run label (what this report is about)'
+        default: 'report'
+      spec:
+        description: 'Card spec JSON (card_page.py --spec format; "url" is set to the page URL here). Max 20000 chars'
+        required: true
+      slug:
+        description: 'Folder under shots/: a-z first, then a-z 0-9 - (1-40 chars); empty = report-<run_id>'
+        default: ''
+      overwrite:
+        description: 'Replace shots/<slug>/ if it already exists'
+        type: boolean
+        default: false
+
+run-name: '${{ inputs.label }} | report | ${{ inputs.slug || ''report-<run_id>'' }}'
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      slug: ${{ steps.v.outputs.slug }}
+      page: ${{ steps.v.outputs.page }}
+      # per attempt; publish reads this name (it may run in a later attempt than render)
+      artifact: report-${{ github.run_number }}-a${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate + render
+        id: v
+        env:
+          SPEC: ${{ inputs.spec }}
+          SLUG: ${{ inputs.slug }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          slug="${SLUG:-report-$RUN_ID}"
+          # a leading letter: an all-digit slug could replace an inspect run's shots/<run_id>/
+          [[ "$slug" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || fail 'slug: a letter, then up to 39 of a-z 0-9 -'
+          [ "${#SPEC}" -le 20000 ] || fail "spec is ${#SPEC} chars (max 20000)"
+          owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
+          pages_host="${owner,,}.github.io"
+          page="https://${pages_host}/${name}/shots/$slug/"
+          mkdir -p pub
+          printf '%s' "$SPEC" > spec_in.json
+          # valid JSON object; "url" = this page (the og:url Discord reads), whatever the spec said
+          PAGE="$page" python3 -c '
+          import json, os, sys
+          try:
+              card = json.load(open("spec_in.json", encoding="utf-8"))
+          except ValueError as e:
+              sys.exit(f"spec is not valid JSON: {e}")
+          if not isinstance(card, dict):
+              sys.exit("spec must be a JSON object")
+          card["url"] = os.environ["PAGE"]
+          json.dump(card, open("spec.json", "w", encoding="utf-8"))
+          ' || fail 'spec: not a valid JSON object (see the step log)'
+          # card_page.py escapes every text value and allows only https URLs on its host allowlist
+          err=$(python3 tools/card_page.py pub/index.html --spec spec.json --allow-host "$pages_host" 2>&1) ||
+            fail "card_page: $(printf '%s' "$err" | tail -1 | cut -c1-300)"
+          { echo "slug=$slug"; echo "page=$page"; } >> "$GITHUB_OUTPUT"
+
+      - name: Upload the page
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: pub/index.html
+          retention-days: 14
+          if-no-files-found: error
+
+  # The ONLY job with write access: pushes shots/<slug>/index.html (tools/push_shots.sh, shared
+  # with inspect.yml's shots job: fresh fetch + commit + push, jittered retries, never concurrency-cancelled).
+  publish:
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.render.outputs.artifact }}
+          path: pub
+
+      - name: Push to branch shots (shots/<slug>/)
+        env:
+          TOKEN: ${{ github.token }}
+          SLUG: ${{ needs.render.outputs.slug }}
+          OVERWRITE: ${{ inputs.overwrite }}
+        run: |
+          mode=no-overwrite; [ "$OVERWRITE" != 'true' ] || mode=overwrite
+          rc=0; bash tools/push_shots.sh pub "$SLUG" "$mode" || rc=$?
+          [ "$rc" != 3 ] || echo "**NOT PUBLISHED:** shots/$SLUG/ already exists; re-run with overwrite or another slug" >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Summary (page URL)
+        env:
+          PAGE: ${{ needs.render.outputs.page }}
+        run: |
+          echo "report card page: $PAGE"
+          {
+            echo '## report card'
+            echo "Discord card page (post this URL bare): $PAGE"
+            echo
+            echo "(Pages deploys ~1+ minute after the push: open the URL in a browser first and post it only once it loads; posted too early, Discord caches an empty embed: post it again with \`?1\` appended. docs/cards.md)"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -102,7 +102,7 @@ jobs:
     env:
       LABEL: ${{ inputs.label }}
       RUNNER_NAME_IN: ${{ inputs.runner }}
-      IMAGE: ${{ inputs.image }}
+      IMAGE: ${{ inputs.image || 'ghcr.io/kivy/buildozer:latest' }}  # empty (inspect.yml passes it as is) = the default
       REPO: ${{ inputs.repo }}
       REF: ${{ inputs.ref }}
       APP: ${{ inputs.app }}

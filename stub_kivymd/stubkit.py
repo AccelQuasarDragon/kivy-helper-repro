@@ -19,7 +19,7 @@ from kivy.graphics.boxshadow import BoxShadow
 from kivy.uix import screenmanager
 
 DEFAULTS = {'shadows': True, 'transition': 'Slide', 'count': True, 'insets': False, 'autotest': 0,
-            'variant': 0, 'ui': '', 'extra': '', 'switches': 20}
+            'autotest_touch': False, 'variant': 0, 'ui': '', 'extra': '', 'switches': 20}
 FALSE = {'0', 'false', 'False', 'off', 'no', ''}
 
 
