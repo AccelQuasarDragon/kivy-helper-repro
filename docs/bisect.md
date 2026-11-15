@@ -14,7 +14,10 @@ Each adds one factor; the FIRST one that crashes names the trigger.
 `ladder.py`: a variant is a point (ui, extra); variants 1..5 = (kivy, kivymd) x (plain, fbo, shadow)
 in that order, minus (kivymd, fbo) (kept out to stay at 5; set `ui` / `extra` directly to run it).
 BOTH screens hold the variant's content: 3 cards, Kivy `Button`s (ui kivy) or elevated `MDCard`s
-(ui kivymd), plus the Fbo view in variant 2. Screen 1 also has START at the bottom.
+(ui kivymd), plus the Fbo view in variant 2. Screen 1 also has START at the bottom. At LAUNCH
+neither screen has its cards: launch draws no variant Fbo / BoxShadow (desktop count line at launch:
+`boxshadow=0 fbo=0` in all 5). Each screen's cards are first built when it arrives (screen 2 at
+switch 1, screen 1 at switch 2).
 
 | # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | made per switch (desktop) | Fbo owners nudged per frame |
 |---|---|---|---|---|---|
@@ -66,7 +69,8 @@ prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages,
 inspect.yml, one run per variant (it builds an arm64 + x86_64 twin of the same source): app empty
 (= stub_kivymd), app_config `{"variant": N}`, extra
 `package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,2060,30` (START = the bottom
-part of screen 1 on pixel_6), launch_wait 30.
+part of screen 1; measured on desktop at 1080x2400, density 2.625 = pixel_6: x 63..1017, y 1796..2337,
+center 540,2067), launch_wait 30.
 PASS for a variant = the screenshot after the tap shows `DONE (variant N, 20/20)`, logcat has 20
 `created_` lines and 20 `frames=` lines, `app pid at end` is set, no Python traceback. All 5 must pass
 before the APKs go out; a failure here is our bug, not the phone's. Do not use `autotest` here (it
@@ -111,8 +115,8 @@ Use the first variant whose answer is CRASH DURING SWITCHES:
   more "first visit" than at switch 7; switch 1 only adds the first-ever GL work of the process (e.g.
   shader compiles). A crash only after many switches points to a repeated / timing / memory effect.
 - No crash anywhere = the user's app has another factor (ask for their KV).
-CLOSED BEFORE START is a different failure (startup: Python, imports, GL context), not a switch
-crash: it does not count as a ladder answer; check the gate run of that variant and ask for the
+CLOSED BEFORE START is a different failure (startup: Python, imports, GL context; launch draws
+no variant Fbo / BoxShadow, so it cannot be the ladder factor), not a switch crash: it does not count as a ladder answer; check the gate run of that variant and ask for the
 Android version first.
 
 ## Untested

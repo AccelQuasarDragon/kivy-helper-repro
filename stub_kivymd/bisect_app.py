@@ -1,6 +1,8 @@
 """Q-B hardware bisection ladder: ONE generator app, the variant picks (ui, extra) by ladder.py's rule.
 
 Screen 1: "Bisect N <name>", a big live counter, the variant's cards and a big START button.
+At launch neither screen has its cards yet (no variant Fbo / BoxShadow before START): each screen's
+cards are first built when it arrives (screen 2 at switch 1, screen 1 at switch 2).
 Screen 2: the same counter + the same cards. Cards = 3 kit cards (+ one raw Fbo view when
 extra = fbo), so BOTH screens carry the variant's factor. One tap = `switches` (default 20)
 automatic switches screen 1 <-> screen 2, each after the transition's duration + 0.3 s, then
@@ -138,7 +140,9 @@ class BisectMixin:
         s1 = self.kit['screen'](name='s1')
         box = BoxLayout(orientation='vertical', padding=dp(24), spacing=dp(24))
         box.add_widget(Label(text=self.label.replace(' ', '\n', 2), font_size=dp(26), halign='center'))
-        self.status = Label(text=f'tap START: {self.total} screen switches', font_size=dp(34))
+        self.status = Label(text=f'tap START: {self.total} screen switches', font_size=dp(30),
+                            halign='center', valign='middle')
+        self.status.bind(size=lambda w, size: setattr(w, 'text_size', size))  # wrap, never clip
         box.add_widget(self.status)
         self.start_btn = Button(text='START', font_size=dp(48), size_hint_y=1.4)
         self.start_btn.bind(on_release=self.start)
@@ -152,8 +156,8 @@ class BisectMixin:
         box.add_widget(self.slots['s1'])
         box.add_widget(self.start_btn)
         box2.add_widget(self.slots['s2'])
-        for name in self.slots:
-            self.rebuild(name)
+        # NO variant content at launch: each screen's cards / Fbos are first built when it ARRIVES
+        # (screen 2 at switch 1, screen 1 at switch 2), so launch draws no variant Fbo / BoxShadow
         s1.add_widget(box)
         s2.add_widget(box2)
         self.sm.add_widget(s1)
