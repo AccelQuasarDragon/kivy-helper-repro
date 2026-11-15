@@ -23,12 +23,6 @@ EXTRAS = ('plain', 'fbo', 'shadow')
 SKIP = {('kivymd', 'fbo')}  # outside the 5-slot budget (QUEUE.md Q-B); a 6th test if ever allowed
 UI_NAME = {'kivy': 'Kivy', 'kivymd': 'KivyMD'}
 EXTRA_NAME = {'plain': 'plain', 'fbo': 'Fbo', 'shadow': 'BoxShadow'}
-# A literal pin list (no rule produces versions). Same for all 5, so the APKs differ only by app_config.
-# materialyoucolor: p4a develop's recipe ships 2.0.10, which lacks dynamiccolor.color_spec (KivyMD master
-# imports it in theming.py; KivyMD declares >= 3.0.3). `name==ver` in requirements makes p4a set
-# VERSION_<name>, so the recipe fetches the v3.0.4 release tarball (3.0.4 = the desktop-checked version).
-REQUIREMENTS = ('python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,'
-                'materialyoucolor==3.0.4,asynckivy,asyncgui,pillow')
 
 
 def variants() -> list[tuple[str, str]]:
@@ -42,7 +36,10 @@ def name(ui: str, extra: str) -> str:
 
 def resolve(variant: int, ui: str = '', extra: str = '') -> tuple[str, str]:
     """(ui, extra) for a variant number; explicit ui / extra override it."""
-    base = variants()[variant - 1] if variant > 0 else ('kivy', 'plain')
+    vs = variants()
+    if not 0 <= variant <= len(vs):
+        raise ValueError(f'variant must be 0..{len(vs)}, got {variant}')
+    base = vs[variant - 1] if variant > 0 else ('kivy', 'plain')
     ui, extra = ui or base[0], extra or base[1]
     if ui not in UIS or extra not in EXTRAS:
         raise ValueError(f'bad ui/extra: {ui!r}/{extra!r}')
@@ -50,7 +47,8 @@ def resolve(variant: int, ui: str = '', extra: str = '') -> tuple[str, str]:
 
 
 def matrix(api: int = 36, label: str = 'Q-B bisect') -> list[dict]:
-    """matrix.yml `builds` elements: one APK per variant, distinct package, arm64 (stub_kivymd's archs)."""
+    """matrix.yml `builds` elements: one APK per variant, distinct package. Everything else (requirements
+    incl. the materialyoucolor pin, p4a develop, ndk 29, arm64) comes from stub_kivymd/spec_overrides.txt."""
     out = []
     for n, (ui, ex) in enumerate(variants(), 1):
         title = f'Bisect {n} {name(ui, ex)}'
@@ -58,7 +56,6 @@ def matrix(api: int = 36, label: str = 'Q-B bisect') -> list[dict]:
             'name': f'bisect{n}',
             'label': f'{label} {n} {name(ui, ex)}',
             'app': 'stub_kivymd',
-            'requirements': REQUIREMENTS,
             'app_config': {'variant': n},
             'extra': f'package.name=bisect{n};title={title};android.api={api}',
         })

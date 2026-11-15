@@ -1,8 +1,17 @@
 """Q-B hardware bisection ladder: ONE generator app, the variant picks (ui, extra) by ladder.py's rule.
 
-Screen 1: "Bisect N <name>", a status line and a big START button. One tap = `switches` (default 20)
-automatic switches screen 1 <-> screen 2, each after the transition's duration + 0.3 s, then
-"DONE (variant N, 20/20)". Screen 2: a title + 3 cards (+ one raw Fbo view when extra = fbo).
+Screen 1: "Bisect N <name>", a big live counter and a big START button. One tap = `switches`
+(default 20) automatic switches screen 1 <-> screen 2, each after the transition's duration + 0.3 s,
+then "DONE (variant N, 20/20)". Screen 2: the same counter + 3 cards (+ one raw Fbo view when
+extra = fbo). The counter `switch k/20` is on both screens, so a crash can be placed by number.
+
+Stress, the same in every variant (so the ladder stays one factor at a time):
+- REBUILD: just before EVERY switch, screen 2's content (cards, Fbo view) is thrown away and built
+  fresh, so each transition creates and first-renders new Fbos / BoxShadows / MDCards (the crash
+  being chased came ~110 ms into the switch to a screen shown for the FIRST time).
+- NUDGE: during each transition, every frame: each Fbo in screen 2 gets ask_update(), each BoxShadow
+  gets a tiny blur_radius change (its Fbo re-renders), each widget with nudge() runs it (FboView
+  moves its disc). A no-op where screen 2 holds no Fbo (variants 1, 4).
 
 A kit = the ui's manager / screen / transition / card classes; everything else (layout, text,
 START / DONE, the switch loop, the printed lines) is shared, so variants differ ONLY by the ladder
@@ -10,7 +19,8 @@ factors. START / status / title are plain Kivy Button / Label in every variant (
 ui = kivy never imports kivymd (the kivymd kit imports it inside its function).
 
 Prints (logcat tag `python`): STUB config / bisect variant / transition / gl / count lines,
-`STUB bisect variant=N switch=k screen=<s1|s2>` per switch, `STUB bisect done ... kivymd_loaded=<bool>` at the end.
+per switch `STUB bisect variant=N switch=k screen=<s1|s2> created_widgets= created_boxshadow=
+created_fbo=` (made by that switch's rebuild) and `STUB bisect variant=N switch=k frames= nudged=`, `STUB bisect done ... kivymd_loaded=<bool>` at the end.
 Config keys (stubkit.py): variant, ui, extra, switches, count, autotest (> 0 = tap START by itself
 after 1.5 s and stop the app 1 s after DONE: desktop / emulator checks).
 """
@@ -29,14 +39,14 @@ from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 
 import ladder
-from stubkit import count_line, disable_shadows, gl_line
+from stubkit import count_line, count_tree, disable_shadows, gl_line, walk_instructions
 
 N_CARDS = 3
 
 
 class FboView(Widget):
     """A raw Kivy Fbo: draws a disc into an offscreen texture and shows that texture.
-    The disc moves with the widget's x, so the Fbo re-renders in every frame of a slide."""
+    Moves (pos / size) and nudge() (every transition frame) move the disc and re-render the Fbo."""
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -52,10 +62,13 @@ class FboView(Widget):
             self.rect = Rectangle(texture=self.fbo.texture)
         self.bind(pos=self.redraw, size=self.redraw)
 
-    def redraw(self, *_):
+    def redraw(self, *_, frame=0):
         self.rect.pos, self.rect.size = self.pos, self.size
-        self.disc.pos = (8 + self.x % 40, 28)
+        self.disc.pos = (8 + (self.x + 4 * frame) % 40, 28)
         self.fbo.ask_update()
+
+    def nudge(self, frame: int) -> None:
+        self.redraw(frame=frame)
 
 
 class ShadowButton(Button):
@@ -109,6 +122,8 @@ class BisectMixin:
         self.cfg, self.n, self.ui, self.extra, self.kit = cfg, n, ui, extra, kit
         self.total = cfg['switches']
         self.k = None  # None = not started
+        self.nudge_ev = None
+        self.frames = self.nudged = 0
         self.label = f'Bisect {n} {ladder.name(ui, extra)}'
 
     def build(self):
@@ -119,25 +134,68 @@ class BisectMixin:
         s1 = self.kit['screen'](name='s1')
         box = BoxLayout(orientation='vertical', padding=dp(24), spacing=dp(24))
         box.add_widget(Label(text=self.label.replace(' ', '\n', 2), font_size=dp(30), halign='center'))
-        self.status = Label(text=f'tap START: {self.total} screen switches', font_size=dp(22))
+        self.status = Label(text=f'tap START: {self.total} screen switches', font_size=dp(34))
         box.add_widget(self.status)
         self.start_btn = Button(text='START', font_size=dp(48), size_hint_y=1.4)
         self.start_btn.bind(on_release=self.start)
         box.add_widget(self.start_btn)
         s1.add_widget(box)
         s2 = self.kit['screen'](name='s2')
-        box2 = BoxLayout(orientation='vertical', padding=dp(32), spacing=dp(32))
-        box2.add_widget(Label(text=f'screen 2 ({self.label})', font_size=dp(20)))
-        for i in range(1, N_CARDS + 1):
-            box2.add_widget(self.kit['card'](i))
-        if self.extra == 'fbo':
-            box2.add_widget(FboView())
-        s2.add_widget(box2)
+        self.box2 = BoxLayout(orientation='vertical', padding=dp(32), spacing=dp(32))
+        self.counter2 = Label(text='screen 2', font_size=dp(34), size_hint_y=0.6)
+        self.box2.add_widget(self.counter2)
+        self.content = None
+        self.rebuild()
+        s2.add_widget(self.box2)
         self.sm.add_widget(s1)
         self.sm.add_widget(s2)
         # MDScreenManager.__init__ schedules check_transition for the next frame: set ours after it
         Clock.schedule_once(lambda dt: Clock.schedule_once(self.after_first_frame), 0)
         return self.sm
+
+    def make_content(self):
+        """Screen 2's content, built fresh: the cards (+ the Fbo view). Everything here is rebuilt."""
+        content = BoxLayout(orientation='vertical', spacing=dp(32), size_hint_y=N_CARDS + 1)
+        for i in range(1, N_CARDS + 1):
+            content.add_widget(self.kit['card'](i))
+        if self.extra == 'fbo':
+            content.add_widget(FboView())
+        return content
+
+    def rebuild(self) -> dict:
+        if self.content is not None:
+            self.box2.remove_widget(self.content)
+        self.content = self.make_content()
+        self.box2.add_widget(self.content)
+        n = count_tree(self.content)
+        n['widgets'] = sum(1 for _ in self.content.walk(restrict=True))
+        return n
+
+    def nudge(self, dt) -> None:
+        """One transition frame: re-render everything in screen 2 that owns an Fbo."""
+        self.frames += 1
+        seen = set()  # a child's canvas is nested in its parent's canvas too
+        for w in self.content.walk(restrict=True):
+            if hasattr(w, 'nudge'):
+                w.nudge(self.frames)
+                self.nudged += 1
+            for group in (w.canvas.before, w.canvas, w.canvas.after):
+                for ins in walk_instructions(group):
+                    if id(ins) in seen:
+                        continue
+                    seen.add(id(ins))
+                    if isinstance(ins, BoxShadow):
+                        ins.blur_radius = ins.blur_radius + (0.01 if self.frames % 2 else -0.01)
+                        self.nudged += 1
+                    elif isinstance(ins, Fbo):
+                        ins.ask_update()
+                        self.nudged += 1
+
+    def stop_nudge(self, *_) -> None:
+        if self.nudge_ev is not None:
+            self.nudge_ev.cancel()
+            self.nudge_ev = None
+            print(f'STUB bisect variant={self.n} switch={self.k} frames={self.frames} nudged={self.nudged}')
 
     def on_start(self):
         gl_line()
@@ -145,6 +203,7 @@ class BisectMixin:
     def after_first_frame(self, dt) -> None:
         self.sm.transition = self.kit['transition']()
         print('STUB transition', type(self.sm.transition).__name__)
+        self.sm.transition.bind(on_complete=self.stop_nudge)
         for screen in self.sm.screens:
             screen.bind(on_enter=lambda s: self.count())
         self.count()
@@ -163,6 +222,7 @@ class BisectMixin:
         Clock.schedule_once(self.step, 0)
 
     def step(self, dt) -> None:
+        self.stop_nudge()
         if self.k >= self.total:
             if self.sm.current != 's1':  # odd `switches`: one extra, uncounted return to screen 1
                 self.sm.current = 's1'
@@ -170,9 +230,13 @@ class BisectMixin:
             return
         self.k += 1
         target = 's2' if self.sm.current == 's1' else 's1'
+        self.status.text = self.counter2.text = f'switch {self.k}/{self.total}'
+        n = self.rebuild()  # fresh screen-2 content, created just before the transition starts
+        print(f'STUB bisect variant={self.n} switch={self.k} screen={target} created_widgets={n["widgets"]} '
+              f'created_boxshadow={n["boxshadow"]} created_fbo={n["fbo"]}')
+        self.frames = self.nudged = 0
         self.sm.current = target
-        print(f'STUB bisect variant={self.n} switch={self.k} screen={target}')
-        self.status.text = f'running: {self.k}/{self.total}'
+        self.nudge_ev = Clock.schedule_interval(self.nudge, 0)  # every frame until on_complete
         Clock.schedule_once(self.step, self.sm.transition.duration + 0.3)
 
     def finish(self) -> None:
