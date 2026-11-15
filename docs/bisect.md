@@ -4,85 +4,115 @@ For people and LLMs. Spec: QUEUE.md "Q-B HARDWARE BISECTION KIT". Code: `stub_ki
 rule), `stub_kivymd/bisect_app.py` (the app), `.github/workflows/matrix.yml` (one run, 5 APKs).
 
 ## Why
-A KivyMD app crashes in the GPU driver (native SIGSEGV, nested Fbo draw) in the first frames after a
-screen change. Emulators render in software and cannot show a driver crash, so the phone owner runs 5
-small APKs. Each adds one factor; the FIRST one that crashes names the trigger.
+A KivyMD app crashes in the GPU driver (native SIGSEGV, nested Fbo draw) about 110 ms into a switch
+to a screen shown for the first time: the incoming screen's Fbos being created and first rendered.
+Emulators render in software and cannot show a driver crash, so the phone owner runs 5 small APKs.
+Each adds one factor; the FIRST one that crashes names the trigger.
 
 ## The ladder (one generator)
 `ladder.py`: a variant is a point (ui, extra); variants 1..5 = (kivy, kivymd) x (plain, fbo, shadow)
 in that order, minus (kivymd, fbo) (kept out to stay at 5; set `ui` / `extra` directly to run it).
-Screen 2 always holds 3 cards: Kivy `Button`s (ui kivy) or elevated `MDCard`s (ui kivymd).
+Screen 2 holds 3 cards: Kivy `Button`s (ui kivy) or elevated `MDCard`s (ui kivymd).
 
-| # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | screen 2 count line (desktop) |
-|---|---|---|---|---|
-| 1 | Kivy plain | org.khr.bisect1 | plain Kivy ScreenManager + SlideTransition | boxshadow=0 fbo=0 |
-| 2 | Kivy Fbo | org.khr.bisect2 | 1 + one raw Kivy Fbo | boxshadow=0 fbo=1 |
-| 3 | Kivy BoxShadow | org.khr.bisect3 | 1 + 3 widgets with Kivy BoxShadow | boxshadow=3 fbo=3 |
-| 4 | KivyMD plain | org.khr.bisect4 | MDScreenManager + MDSharedAxis, elevated cards, shadows OFF | boxshadow=0 elevated=3 |
-| 5 | KivyMD BoxShadow | org.khr.bisect5 | 4 with stock shadows ON | boxshadow=3 elevated=3 |
+| # | name (app title `Bisect N <name>`) | package | QUEUE.md variant | made per switch (desktop) | nudged per frame |
+|---|---|---|---|---|---|
+| 1 | Kivy plain | org.khr.bisect1 | plain Kivy ScreenManager + SlideTransition | 4 widgets, 0 BoxShadow, 0 Fbo | 0 |
+| 2 | Kivy Fbo | org.khr.bisect2 | 1 + one raw Kivy Fbo | 5 widgets, 0 BoxShadow, 1 Fbo | 2 |
+| 3 | Kivy BoxShadow | org.khr.bisect3 | 1 + 3 widgets with Kivy BoxShadow | 4 widgets, 3 BoxShadow, 3 Fbo | 6 |
+| 4 | KivyMD plain | org.khr.bisect4 | MDScreenManager + MDSharedAxis, elevated cards, shadows OFF | 7 widgets, 0 BoxShadow, 0 Fbo | 0 |
+| 5 | KivyMD BoxShadow | org.khr.bisect5 | 4 with stock shadows ON | 7 widgets, 3 BoxShadow, 3 Fbo | 6 |
 
-Variants 1-3 never import kivymd (`kivymd_loaded=False` in the done line); all 5 APKs carry the same
-requirements, so they differ only by `app_config` + package name / title. Shadows OFF = stubkit's
-Factory swap (no BoxShadow, no BoxShadow Fbo at all). START / status text are plain Kivy widgets in
-every variant.
+The same stress in every variant, so the ladder stays one factor at a time:
+- REBUILD: just before EVERY switch (both directions), screen 2's cards (+ Fbo view) are thrown away
+  and built fresh, so each of the 20 transitions creates and first-renders new Fbos / BoxShadows /
+  MDCards: 20 chances at the "first visit" moment instead of one.
+- NUDGE: during each transition (every frame until the transition's on_complete), every Fbo in
+  screen 2 gets `ask_update()`, every BoxShadow a +-0.01 `blur_radius` change (re-sets its Fbo's
+  uniforms), the Fbo view moves its disc. Nothing to nudge in variants 1 and 4.
+
+Variants 1-3 never import kivymd (`kivymd_loaded=False` in the done line); all 5 APKs have the same
+requirements and differ only by `app_config` + package name / title. Shadows OFF = stubkit's
+Factory swap (no BoxShadow, no BoxShadow Fbo at all). START, the counter and the titles are plain
+Kivy widgets in every variant.
 
 What the app does: screen 1 shows `Bisect N <name>` and a big START. One tap = 20 automatic switches
 screen 1 <-> screen 2, each after the transition's duration + 0.3 s (Slide 0.7 s, MDSharedAxis
-0.5 s), then `DONE (variant N, 20/20)`. Logcat (tag `python`): `STUB bisect variant=N ui= extra=`,
-`STUB gl ...` (the GPU line), `STUB count ...` after each switch, `STUB bisect variant=N switch=k
-screen=s1|s2`, `STUB bisect done variant=N switches=20/20 kivymd_loaded=<bool>`.
+0.5 s); both screens show a big `switch k/20` counter; at the end `DONE (variant N, 20/20)`.
+Logcat (tag `python`): `STUB bisect variant=N ui= extra=`, `STUB gl ...` (the GPU line), per switch
+`STUB bisect variant=N switch=k screen=s1|s2 created_widgets= created_boxshadow= created_fbo=` then
+`STUB bisect variant=N switch=k frames= nudged=`, a `STUB count ...` line on each arrival, and
+`STUB bisect done variant=N switches=20/20 kivymd_loaded=<bool>`.
 
-## Build: ONE matrix run (Actions -> "build matrix" -> Run workflow)
+## 1. Build: ONE matrix run (Actions -> "build matrix" -> Run workflow)
 label `Q-B bisect kit`, builds = this JSON (regenerate: `uv run --no-project stub_kivymd/ladder.py`):
 
 ```json
-[{"name":"bisect1","label":"Q-B bisect 1 Kivy plain","app":"stub_kivymd","requirements":"python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow","app_config":{"variant":1},"extra":"package.name=bisect1;title=Bisect 1 Kivy plain;android.api=36"},{"name":"bisect2","label":"Q-B bisect 2 Kivy Fbo","app":"stub_kivymd","requirements":"python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow","app_config":{"variant":2},"extra":"package.name=bisect2;title=Bisect 2 Kivy Fbo;android.api=36"},{"name":"bisect3","label":"Q-B bisect 3 Kivy BoxShadow","app":"stub_kivymd","requirements":"python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow","app_config":{"variant":3},"extra":"package.name=bisect3;title=Bisect 3 Kivy BoxShadow;android.api=36"},{"name":"bisect4","label":"Q-B bisect 4 KivyMD plain","app":"stub_kivymd","requirements":"python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow","app_config":{"variant":4},"extra":"package.name=bisect4;title=Bisect 4 KivyMD plain;android.api=36"},{"name":"bisect5","label":"Q-B bisect 5 KivyMD BoxShadow","app":"stub_kivymd","requirements":"python3,kivy==2.3.2,https://github.com/kivymd/KivyMD/archive/master.zip,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow","app_config":{"variant":5},"extra":"package.name=bisect5;title=Bisect 5 KivyMD BoxShadow;android.api=36"}]
+[{"name":"bisect1","label":"Q-B bisect 1 Kivy plain","app":"stub_kivymd","app_config":{"variant":1},"extra":"package.name=bisect1;title=Bisect 1 Kivy plain;android.api=36"},{"name":"bisect2","label":"Q-B bisect 2 Kivy Fbo","app":"stub_kivymd","app_config":{"variant":2},"extra":"package.name=bisect2;title=Bisect 2 Kivy Fbo;android.api=36"},{"name":"bisect3","label":"Q-B bisect 3 Kivy BoxShadow","app":"stub_kivymd","app_config":{"variant":3},"extra":"package.name=bisect3;title=Bisect 3 Kivy BoxShadow;android.api=36"},{"name":"bisect4","label":"Q-B bisect 4 KivyMD plain","app":"stub_kivymd","app_config":{"variant":4},"extra":"package.name=bisect4;title=Bisect 4 KivyMD plain;android.api=36"},{"name":"bisect5","label":"Q-B bisect 5 KivyMD BoxShadow","app":"stub_kivymd","app_config":{"variant":5},"extra":"package.name=bisect5;title=Bisect 5 KivyMD BoxShadow;android.api=36"}]
 ```
 
 Everything else comes from `stub_kivymd/spec_overrides.txt`: p4a develop, android.ndk 29, archs
-arm64-v8a, Kivy 2.3.2, KivyMD master; `extra` raises android.api to 36 (the reporter's). Cache: `off`
-(cold, the only evidence). Artifacts `build-<run>-bisect1..5` hold the debug APKs; the `facts` job
-prints package / targetSdk / ABIs / sha256 of all 5.
-`materialyoucolor==3.0.4`: p4a develop's recipe ships 2.0.10, which has no
-`materialyoucolor.dynamiccolor.color_spec`; KivyMD master imports it in `theming.py` (it declares
-`>= 3.0.3`), so variants 4-5 crash at import without the pin (seen on the emulator for the stub). p4a
-turns `name==ver` into `VERSION_<name>`, so the recipe fetches the GitHub release tarball v3.0.4
-(exists; setuptools + pybind11 build, like 2.0.10's setup.py). 3.0.4 = the version the desktop check
-ran. Once `spec_overrides.txt` carries the pin, the `requirements` key can be dropped from the JSON.
+arm64-v8a, Kivy 2.3.2, KivyMD master, `materialyoucolor==3.0.4` (p4a develop's recipe ships 2.0.10,
+which lacks `dynamiccolor.color_spec` that KivyMD master imports; `name==ver` makes p4a fetch the
+v3.0.4 release tarball). `extra` raises android.api to 36 (the reporter's). Cache `off` (cold, the
+only evidence). Artifacts `build-<run>-bisect1..5-a<attempt>` hold the debug APKs; the `facts` job
+prints package / targetSdk / ABIs / sha256 of all 5 (check: 5 distinct packages, ABI arm64-v8a).
 
-## Emulator smoke test (optional, x86_64, before sending)
-inspect.yml, one run per variant (it adds x86_64): app empty (= stub_kivymd), app_config
-`{"variant": N}`, extra `requirements=<the requirements above>;android.api=36` (extra wins over
-spec_overrides), taps `540,1900,30` (START = bottom part of screen 1 on pixel_6), launch_wait 30.
-Pass = the screenshot after the tap shows `DONE (variant N, 20/20)`, logcat shows 20 `switch=` lines,
-`app pid at end` is set. A software emulator CANNOT clear a GPU-driver crash: this only proves the app
-runs. (Do not use `autotest` there: it stops the app after DONE, which reads like a crash.)
+## 2. GATE: emulator smoke test of all 5 before anything is sent (QUEUE.md acceptance)
+inspect.yml, one run per variant (it builds an arm64 + x86_64 twin of the same source): app empty
+(= stub_kivymd), app_config `{"variant": N}`, extra
+`package.name=bisectN;title=Bisect N <name>;android.api=36`, taps `540,1900,30` (START = the bottom
+part of screen 1 on pixel_6), launch_wait 30.
+PASS for a variant = the screenshot after the tap shows `DONE (variant N, 20/20)`, logcat has 20
+`created_` lines and 20 `frames=` lines, `app pid at end` is set, no Python traceback. All 5 must pass
+before the APKs go out; a failure here is our bug, not the phone's. Do not use `autotest` here (it
+stops the app after DONE, which reads like a crash). The software emulator CANNOT clear a GPU-driver
+crash: the gate only proves the app itself runs.
+BUDGET NOTE: these are 5 more builds on top of QUEUE.md's "3 runs for Q-B" (inspect cannot take a
+matrix artifact: `apk_url` needs a public https URL). Either accept the extra runs, or let the parent
+add an `add_archs: x86_64` matrix + an inspect input that reads a run's artifact.
 
-## Instructions for the phone owner (copy as is)
-1. Install the 5 apps "Bisect 1" to "Bisect 5" (Android may ask you to allow installing apps from this source: allow it).
-2. Open "Bisect 1" and tap the big START button once.
-3. Wait about 20 seconds without touching anything: the screen flips back and forth by itself.
-4. Write down NO CRASH if you see "DONE (variant 1, 20/20)", or CRASH if the app closes or freezes.
-5. Do the same with Bisect 2, 3, 4 and 5 (you may stop at the first CRASH), then send us the table below.
+## 3. Send: what the helper does
+1. Open the matrix run on GitHub (logged in), download the 5 artifacts `build-<run>-bisect1..5-a1`
+   (zip files), unzip each, and take out the one `.apk` in each (`bisect1-0.1-arm64-v8a-debug.apk` ...).
+2. Send the 5 `.apk` files to the phone owner (chat attachment, cloud link), with the steps below.
 
-| # | Variant | CRASH / NO CRASH | Phone + Android version |
-|---|---------|------------------|-------------------------|
+## 4. Steps for the phone owner (copy as is)
+1. Save the 5 files Bisect 1 to Bisect 5 on your phone. Tap the first one in your Files app or browser downloads.
+2. If Android says installing unknown apps is not allowed: tap Settings, turn on "Allow from this source", go back, tap Install.
+3. If Play Protect warns about an unknown app: tap "More details", then "Install anyway". Do the same for all 5 files.
+4. Open "Bisect 1" and tap the big START button once. Do not touch the phone for 30 seconds. The screen flips back and forth by itself and counts "switch 1/20" to "switch 20/20".
+5. Write down one answer for Bisect 1:
+   - CLOSED BEFORE START: the app closed, or never showed the START button.
+   - CRASH DURING SWITCHES: the app closed, or froze (stuck for more than 30 seconds). Also write the last "switch .../20" number you saw.
+   - NO CRASH: you saw "DONE (variant 1, 20/20)".
+6. Do the same with Bisect 2, 3, 4 and 5 (you may stop at the first crash), fill in the table and send it back.
+7. When done, uninstall the 5 apps: long-press each icon, then Uninstall.
+
+| # | Variant | CLOSED BEFORE START / CRASH DURING SWITCHES (switch no.) / NO CRASH | Phone + Android version |
+|---|---------|--------------------------------------------------------------------|-------------------------|
 | 1 | plain Kivy | | |
 | 2 | raw Fbo | | |
 | 3 | BoxShadow | | |
 | 4 | KivyMD shadows off | | |
 | 5 | KivyMD shadows on | | |
 
-## How to read it (QUEUE.md)
-First crash at 3 (or at 5 with 4 clean) = BoxShadow, the leading theory; workaround = shadows off /
-elevation 0 on that phone. First crash at 2 = any Fbo. Crash at 1 = not Fbo at all (Kivy GL or the
-driver on any redraw). Crash at 4 but not 3 = KivyMD's transition / widgets without shadows. No crash
-anywhere = the user's app has another factor (ask for their KV).
+## 5. How to read it (QUEUE.md)
+Use the first variant whose answer is CRASH DURING SWITCHES:
+- first crash at 3 (or at 5 with 4 clean) = BoxShadow, the leading theory; workaround = shadows off /
+  elevation 0 on that phone. First crash at 2 = any Fbo. Crash at 1 = not Fbo at all (Kivy GL or the
+  driver on any redraw). Crash at 4 but not 3 = KivyMD's transition / widgets without shadows.
+- a low switch number (1-2) = the first-visit create + render; a later one = a repeated / timing effect.
+- No crash anywhere = the user's app has another factor (ask for their KV).
+CLOSED BEFORE START is a different failure (startup: Python, imports, GL context), not a switch
+crash: it does not count as a ladder answer; check the gate run of that variant and ask for the
+Android version first.
 
 ## Untested
-- Nothing here has run on GitHub or Android yet: matrix.yml, the materialyoucolor 3.0.4 recipe build,
-  android.api 36, the APKs, the emulator taps (START position), the facts table.
+- Nothing has run on GitHub or Android yet: matrix.yml (incl. the facts table and re-run naming),
+  the materialyoucolor 3.0.4 recipe build, android.api 36, the APKs, the emulator gate taps (START
+  position worked out from the layout, not measured), the install steps on Android 11.
 - Desktop only (Windows, kivy 2.3.2, KivyMD master, materialyoucolor 3.0.4, autotest): all 5 reach
-  20/20 + DONE with the counts in the table above. A desktop pass does not prove the APK imports.
-- The Fbo in variant 2 re-renders on every move of the widget (as BoxShadow does on its own changes);
-  whether that matches the driver path BoxShadow takes is a judgement, not a measurement.
+  20/20 + DONE with the per-switch numbers in the table above. A desktop pass does not prove the APK
+  imports.
+- Whether the nudge drives the same driver path as KivyMD's own BoxShadow updates is a judgement,
+  not a measurement.

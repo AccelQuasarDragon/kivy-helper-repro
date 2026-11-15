@@ -25,7 +25,7 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.
 
-Artifacts (14 days): `build-<n>` (build.log, spec, APK; `build-<n>-<name>` when built by matrix.yml) and `inspect-<n>` (PNGs, logcat, badging,
+Artifacts (14 days): `build-<n>` (build.log, spec, APK; `build-<n>-<name>-a<attempt>` when built by matrix.yml) and `inspect-<n>` (PNGs, logcat, badging,
 python_packages.md, install/launch output).
 
 ## Inputs
