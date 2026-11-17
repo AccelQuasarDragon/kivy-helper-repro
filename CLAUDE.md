@@ -20,6 +20,7 @@ One reusable workflow, not one repo per question.
   (`workflow_call`); screenshots go to the orphan branch `shots`. Helpers: `tools/apk_pkgs.py`,
   `tools/emu_run.sh`, `tools/contact_sheet.py`. Test app: `stub_kivymd/` (+ its `spec_overrides.txt`).
 - `patches/<app>/*.diff`: diffs applied by build.yml input `patches` (header = what + upstream commit; docs/inspect.md).
+- `patches/controlp/bisect_toggles.diff` + `tools/controlp_bisect.py`: controlP top-down bisect (groups of their UI off via `app_config`; prints matrix / gate / devicelab JSON); docs/bisect.md.
 - `tools/fakes/*.py`: stdlib fake devices, inspect.yml input `sidecar` + `adb_reverse` (docs/inspect.md).
 - `.github/workflows/devicelab.yml` + `docs/devicelab.md`: real phone on Firebase Test Lab (keyless login; redacts +
   scans everything it uploads, fails closed: `tools/ftl_redact.py`). Screenshots/video are read by hand after each run.
