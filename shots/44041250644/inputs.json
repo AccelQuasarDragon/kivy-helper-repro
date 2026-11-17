@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44041250644",
+ "inputs": {
+  "label": "controlP cad5d5c R8: demo device shadows on api34 Android 15 (cold)",
+  "apk_url": "",
+  "artifact_run": "",
+  "artifact_name": "",
+  "repo": "yabb85/controlP",
+  "ref": "cad5d5c626516dcbf18719194c92e63f06128d62",
+  "app": "src",
+  "archs": "",
+  "extra": "android.api=34",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "35",
+  "profile": "pixel_6",
+  "taps": "540,600,8;540,800,8;540,360,8;540,360,10",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "patches/controlp/demo_device.diff;patches/controlp/shadows_on.diff",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
