@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44181513041",
+ "inputs": {
+  "label": "controlP bisect gate S0 defaults shadows off from matrix run 44177064426",
+  "apk_url": "",
+  "artifact_run": "44177064426",
+  "artifact_name": "build-4-S0-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "35",
+  "profile": "pixel_6",
+  "taps": "540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
