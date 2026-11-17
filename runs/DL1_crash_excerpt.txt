@@ -1,0 +1,76 @@
+Firebase Test Lab, Pixel 5 redfin, Android 11, Adreno 620; controlP cad5d5c + demo-device + shadows ON patch (R8 APK);
+devicelab.yml run 1, 2026-11-17; excerpt of the console logcat, line ranges 22074-22077, 22272-22277, 22768, 25660, 25664-25668, 27752, 27761-27762, 28157-28170, 28188-28207, 28244-28245, 28255-28256, 28718, 28721;
+'...' marks skipped lines; random install folders shown as /data/app/<install>/, a Play Store id as <id>.
+
+11-17 09:31:06.057 27602 27701 I python  : [INFO   ] [Kivy        ] v2.3.2
+11-17 09:31:06.057 27602 27701 I python  : [INFO   ] [Kivy        ] Installed at "/data/user/0/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/__init__.pyc"
+11-17 09:31:06.057 27602 27701 I python  : [INFO   ] [Python      ] v3.14.2 (main, Nov 17 2026, 07:56:43) [Clang 21.0.0 (https://android.googlesource.com/toolchain/llvm-project 5e96669f0
+11-17 09:31:06.057 27602 27701 I python  : [INFO   ] [Python      ] Interpreter at "/data/user/0/org.controlp.controlp/files/app/.bin/python"
+...
+11-17 09:31:07.138 27602 27701 I python  : [INFO   ] [GL          ] Using the "OpenGL ES 2" graphics system
+11-17 09:31:07.138 25357 25357 I Finsky  : [2] has_fop cache updated to: false, instrument status updated to: [<id>] (account=1)
+11-17 09:31:07.141 27602 27701 I python  : [INFO   ] [GL          ] Backend used <sdl2>
+11-17 09:31:07.141 27602 27701 I python  : [INFO   ] [GL          ] OpenGL version <b'OpenGL ES 3.2 V@0490.0 (GIT@4783c89, I46ff5fc46f, 1606807783) (Date:11/30/20)'>
+11-17 09:31:07.141 27602 27701 I python  : [INFO   ] [GL          ] OpenGL vendor <b'Qualcomm'>
+11-17 09:31:07.141 27602 27701 I python  : [INFO   ] [GL          ] OpenGL renderer <b'Adreno (TM) 620'>
+...
+11-17 09:31:08.847 27602 27701 I python  : [INFO   ] [Base        ] Start application main loop
+...
+11-17 09:31:25.990 27243 27331 D UiDevice: Clicking on (540, 600).
+...
+11-17 09:31:26.048 27602 28003 I python  : FAKEPIONEER 09:31:26 tcp 127.0.0.1:47084 -- connected
+11-17 09:31:26.048 27602 28003 I python  : FAKEPIONEER 09:31:26 tcp 127.0.0.1:47084 <- ?P
+11-17 09:31:26.048 27602 28003 I python  : FAKEPIONEER 09:31:26 tcp 127.0.0.1:47084 -> PWR0
+11-17 09:31:26.049 27602 28003 I python  : FAKEPIONEER 09:31:26 tcp 127.0.0.1:47084 <- ?F
+11-17 09:31:26.049 27602 28003 I python  : FAKEPIONEER 09:31:26 tcp 127.0.0.1:47084 -> FN38
+...
+11-17 09:31:36.121 27243 27331 D UiDevice: Clicking on (540, 800).
+...
+11-17 09:31:36.258 27602 28003 I python  : FAKEPIONEER 09:31:36 tcp 127.0.0.1:47084 <- 44FN
+11-17 09:31:36.258 27602 28003 I python  : FAKEPIONEER 09:31:36 tcp 127.0.0.1:47084 -> FN44
+...
+--------- beginning of crash
+11-17 09:31:36.313 27602 27701 F libc    : Fatal signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x40 in tid 27701 (SDLThread), pid 27602 (SDLActivity)
+11-17 09:31:36.359 28105 28105 I crash_dump64: obtaining output fd from tombstoned, type: kDebuggerdTombstone
+11-17 09:31:36.359   857   857 I tombstoned: received crash request for pid 27701
+11-17 09:31:36.360 28105 28105 I crash_dump64: performing dump of process 27602 (target tid = 27701)
+11-17 09:31:36.368 28105 28105 F DEBUG   : *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***
+11-17 09:31:36.368 28105 28105 F DEBUG   : Build fingerprint: 'google/redfin/redfin:11/RQ3A.211001.001/7641976:user/release-keys'
+11-17 09:31:36.368 28105 28105 F DEBUG   : Revision: 'MP1.0'
+11-17 09:31:36.368 28105 28105 F DEBUG   : ABI: 'arm64'
+11-17 09:31:36.368 28105 28105 F DEBUG   : Timestamp: 2026-11-17 09:31:36-0800
+11-17 09:31:36.368 28105 28105 F DEBUG   : pid: 27602, tid: 27701, name: SDLThread  >>> org.controlp.controlp <<<
+11-17 09:31:36.368 28105 28105 F DEBUG   : uid: 10274
+11-17 09:31:36.368 28105 28105 F DEBUG   : signal 11 (SIGSEGV), code 1 (SEGV_MAPERR), fault addr 0x40
+11-17 09:31:36.369 28105 28105 F DEBUG   : Cause: null pointer dereference
+...
+11-17 09:31:36.502 28105 28105 F DEBUG   : backtrace:
+11-17 09:31:36.502 28105 28105 F DEBUG   :     NOTE: Function names and BuildId information is missing for some frames due
+11-17 09:31:36.502 28105 28105 F DEBUG   :     NOTE: to unreadable libraries. For unwinds of apps, only shared libraries
+11-17 09:31:36.502 28105 28105 F DEBUG   :     NOTE: found under the lib/ directory are readable.
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #00 pc 000000000039b030  /vendor/lib64/egl/libGLESv2_adreno.so (!!!0000!7b4d3d680da059de73d7f9795dc456!4783c89!+368) (BuildId: 61981bdebe755a0eeb9e973b60d669d4)
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #01 pc 0000000000388b20  /vendor/lib64/egl/libGLESv2_adreno.so (!!!0000!f56be09eb88f86833124f1df42e945!4783c89!+4192) (BuildId: 61981bdebe755a0eeb9e973b60d669d4)
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #02 pc 000000000018073c  /vendor/lib64/egl/libGLESv2_adreno.so (!!!0000!6b200851123c7898055fe62ff9f71f!4783c89!+620) (BuildId: 61981bdebe755a0eeb9e973b60d669d4)
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #03 pc 00000000001783e4  /vendor/lib64/egl/libGLESv2_adreno.so (!!!0000!77df12deb6a622478efa8fb9929034!4783c89!+388) (BuildId: 61981bdebe755a0eeb9e973b60d669d4)
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #04 pc 000000000000e5f4  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/vbo.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #05 pc 0000000000019464  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #06 pc 000000000000ab40  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/compiler.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #07 pc 00000000000173d8  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #08 pc 0000000000016b9c  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #09 pc 0000000000019d6c  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #10 pc 000000000001b130  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #11 pc 000000000000f548  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/fbo.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #12 pc 000000000000ab40  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/compiler.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #13 pc 00000000000173d8  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #14 pc 0000000000016b9c  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.502 28105 28105 F DEBUG   :       #15 pc 000000000000ab40  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/compiler.so
+...
+11-17 09:31:36.503 28105 28105 F DEBUG   :       #52 pc 0000000000026b48  /data/data/org.controlp.controlp/files/app/_python_bundle/site-packages/kivy/graphics/instructions.so
+11-17 09:31:36.503 28105 28105 F DEBUG   :       #53 pc 000000000021c9e8  /data/app/<install>/lib/arm64/libpython3.14.so (PyObject_Vectorcall+92)
+...
+11-17 09:31:36.503 28105 28105 F DEBUG   :       #63 pc 0000000000003440  /data/app/<install>/lib/arm64/libmain.so (SDL_main+2540) (BuildId: 0858d35ac18058d889b1b4e092b22acc7a7cb31f)
+11-17 09:31:36.503 28105 28105 F DEBUG   :       #64 pc 00000000000b3bb8  /data/app/<install>/lib/arm64/libSDL2.so (Java_org_libsdl_app_SDLActivity_nativeRunMain+756) (BuildId: 6d36e1d2850abfabb2c8f3f07840bdd75e72d1b4)
+...
+11-17 09:31:36.884   866   866 I Zygote  : Process 27602 exited due to signal 11 (Segmentation fault)
+...
+11-17 09:31:36.884  1483  4608 I ActivityManager: Process org.controlp.controlp (pid 27602) has died: prcp TOP 

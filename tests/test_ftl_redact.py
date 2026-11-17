@@ -5,7 +5,10 @@ the fake email is built from parts so the privacy check does not flag it).
 The filter (stdin -> stdout) and --inplace must replace the service account, project id, the project
 NUMBER found as projects/<n>/ anywhere in WIF (not inside a longer number) and any test-lab-<x> bucket
 name. Also: empty / unset values replace nothing, regex metacharacters in a value are literal, and
-non-UTF-8 bytes pass through unchanged. Exit 0 = all pass, 1 = a failure."""
+non-UTF-8 bytes pass through unchanged. Generic rules: any email -> <email> (masked ones and
+HAL names too), the user names of those emails as whole words -> <account> (filter: from earlier lines;
+--inplace: two passes over the whole file set), /home/<name> -> /home/<home> (user kept); nothing printed.
+Exit 0 = all pass, 1 = a failure."""
 import os
 import subprocess
 import sys
@@ -74,7 +77,67 @@ def main() -> int:
     ok &= check('regex metacharacters', run(b'demoXpp1 demo.p+1\n', meta), b'demoXpp1 <redacted-project>\n')
     # non-UTF-8 bytes pass through unchanged around a redaction
     ok &= check('non-UTF-8 input', run(b'\xff\xfe test-lab-x9 \x80\n', BASE), b'\xff\xfe <redacted-bucket> \x80\n')
+    ok &= generic_rules()
     return 0 if ok else 1
+
+
+# generic rules (emails, their user names, /home/<name>): fake values built from parts (AT, HOME) so
+# tools/privacy_check.py does not flag this file itself
+AT, HOME = '@', '/ho' + 'me/'
+LAB = 'fakelab' + 'acct77'
+GEN_RAW = ('I AccountHelper: added ' + LAB + AT + 'labaccounts.example.com\n'
+           'I Auth: masked x' + AT + 'xxxx.xxx and xxxxxx' + AT + 'xxxx.xxx\n'
+           'I init: starting composer' + AT + '1.0-service.pixel\n'
+           'I App: open ' + HOME + 'alice/app/main.py and ' + HOME + 'user/app and ' + HOME + 'runner/work\n')
+GEN_RAW2 = ('I AccountHelper: account: ' + LAB + ' synced\n'
+            'I App: ' + LAB.upper() + ' and ' + LAB + 'x and bob ' + LAB + '.\n')
+GEN_WANT = ('I AccountHelper: added <email>\n'
+            'I Auth: masked <email> and <email>\n'
+            'I init: starting <email>\n'
+            'I App: open ' + HOME + '<home>/app/main.py and ' + HOME + 'user/app and ' + HOME + '<home>/work\n')
+GEN_WANT2 = ('I AccountHelper: account: <account> synced\n'
+             'I App: <account> and ' + LAB + 'x and bob <account>.\n')
+
+
+def generic_rules() -> bool:
+    ok = check('filter: email, masked, HAL, home', run(GEN_RAW.encode(), BASE).decode(), GEN_WANT)
+    # filter mode: a user name seen on an earlier line is redacted alone on a later line (whole word only)
+    ok &= check('filter: user name on a later line', run((GEN_RAW + GEN_RAW2).encode(), BASE).decode(),
+                GEN_WANT + GEN_WANT2)
+    # short / placeholder / HAL local parts are never collected as user names
+    ok &= check('no short / placeholder / HAL names', run(b'composer xxxxxx xx\n' + GEN_RAW.encode(), BASE).decode(),
+                'composer xxxxxx xx\n' + GEN_WANT)
+    with tempfile.TemporaryDirectory() as d:
+        # --inplace two-pass: the email is in file a, the bare user name in file b (and before the email in a)
+        a, b = os.path.join(d, 'logcat'), os.path.join(d, 'other.txt')
+        with open(a, 'wb') as f:
+            f.write(GEN_RAW2.encode() + GEN_RAW.encode())
+        with open(b, 'wb') as f:
+            f.write(b'\xff\x00 ' + LAB.encode() + b' \x80\n')
+        c = subprocess.run([sys.executable, TOOL, '--inplace', a, b], capture_output=True, env=ENV)
+        ok &= check('--inplace prints nothing', (c.returncode, c.stdout, c.stderr), (0, b'', b''))
+        with open(a, 'rb') as f:
+            ok &= check('--inplace two-pass, same file', f.read().decode(), GEN_WANT2 + GEN_WANT)
+        with open(b, 'rb') as f:
+            ok &= check('--inplace two-pass, other file, binary-safe', f.read(), b'\xff\x00 <account> \x80\n')
+        # the redacted files pass tools/privacy_check.py --files
+        pc = os.path.join(os.path.dirname(TOOL), 'privacy_check.py')
+        c = subprocess.run([sys.executable, pc, '--files', a, b], capture_output=True, text=True, env=BASE, cwd=d)
+        ok &= check('privacy_check passes the redacted files', (c.returncode, c.stdout), (0, ''))
+    # file names that match the email regex are redacted where they stand but collect NO user name:
+    # Java frame paths and the "I python :" tag lines (the summary greps them) survive elsewhere
+    files = ('W art: /data/dalvik-cache/arm64/system' + AT + 'framework' + AT + 'boot.art\n'
+             'W art: /data/app/base.apk' + AT + 'classes.dex\n'
+             'I main: python' + AT + 'run.so\n')
+    keep = ('at /system/framework/framework.jar (boot) base.apk classes\n'
+            'I python  : [INFO   ] [Kivy        ] v2.3.2\n')
+    ok &= check('file names collect no user name', run((files + keep).encode(), BASE).decode().split('\n', 3)[3], keep)
+    # the lab-style account domain still collects the name
+    lab = 'labby' + 'user9'
+    ok &= check('lab account domain collects the name',
+                run(('a ' + lab + AT + 'cloudtestlab' + 'accounts.com\nb ' + lab + '\n').encode(), BASE),
+                b'a <email>\nb <account>\n')
+    return ok
 
 
 if __name__ == '__main__':
