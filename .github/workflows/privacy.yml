@@ -5,13 +5,13 @@ name: privacy check
 # ALARM, NOT A LOCK: it runs AFTER the push is already public. The lock is the local pre-push hook
 # (.githooks/pre-push.local, run by the author's local guard once it is enabled).
 # Pushes made with GITHUB_TOKEN (inspect.yml -> orphan branch `shots`) trigger no workflow, so the
-# workflow_run trigger re-checks every branch after each inspect run. Inputs reach the shell via env only.
+# workflow_run trigger re-checks every branch after each inspect / report run. Inputs reach the shell via env only.
 on:
   push:
     branches: ['**']
   pull_request:
   workflow_run:
-    workflows: ['inspect apk']
+    workflows: ['inspect apk', 'report card']
     types: [completed]
 
 permissions:

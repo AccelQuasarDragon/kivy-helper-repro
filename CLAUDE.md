@@ -21,7 +21,12 @@ One reusable workflow, not one repo per question.
   `tools/emu_run.sh`, `tools/contact_sheet.py`. Test app: `stub_kivymd/` (+ its `spec_overrides.txt`).
 - `patches/<app>/*.diff`: diffs applied by build.yml input `patches` (header = what + upstream commit; docs/inspect.md).
 - `tools/fakes/*.py`: stdlib fake devices, inspect.yml input `sidecar` + `adb_reverse` (docs/inspect.md).
-- `.github/workflows/devicelab.yml` + `docs/devicelab.md`: real phone on Firebase Test Lab, inert until set up.
+- `.github/workflows/devicelab.yml` + `docs/devicelab.md`: real phone on Firebase Test Lab (keyless login; redacts +
+  scans everything it uploads, fails closed: `tools/ftl_redact.py`). Screenshots/video are read by hand after each run.
+- `.github/workflows/report.yml` + `tools/card_page.py`: publish a report (index.html, TESTS.md, sheet.png) to `shots`.
+  `.github/workflows/matrix.yml`: several build.yml runs at once.
+- `tools/privacy_check.py` + `.github/workflows/privacy.yml` (alarm: scans the pushed tree on every push, and ALL branches incl. `shots` after each inspect / report run)
+  + `.privacy-allow` (manual clears, see Privacy check).
 - `tests/`: local regression guards (no CI job); run line at the top of each file (`uv run --no-project tests/test_*.py`, `bash tests/inject_test.sh`).
 - NOTES / RUN LOGS go in `runs/*.md` (git-ignored = local only, never committed; e.g. `runs/log.md`). Only the
   `runs/*.txt` excerpts are tracked (cited upstream: keep unchanged). Task status lives in the author's private tracker.
@@ -54,6 +59,12 @@ Only a cold run is evidence: "reproduced" / "fixed" claims cite a cold run's lin
 Every summary must say which cache level ran and whether it was hit.
 
 ## Privacy check (before every push)
+    uv run --no-project tools/privacy_check.py      # main check: tree + commits; expected "0 hit(s)"
+    git fetch -q origin shots && uv run --no-project tools/privacy_check.py --tree origin/shots
+False positive = one line in `.privacy-allow` (`path-glob:line-regex`): one folder + one exact string, added BY HAND by
+the author after reading the hit; it hides only the matched text, the rest of the line is still scanned. Never weaken a
+rule; never allow-list a real value (remove it instead, and delete the leaking workflow run).
+Second look (the old grep; its `/home/[a-z]` also hits relative paths on `shots` (controlP's own views/hom[e] kv path) = read, then ignore):
     git grep -nIiE '[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|[A-Z]:\\|/Users/|/home/[a-z]|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_' -- . ':!CLAUDE.md'
     git log --all --format='%an <%ae> | %cn <%ce>' | sort -u   # only the GitHub noreply address
 Expected: no hits except `/home/user` (the container's own user) and the noreply author.

@@ -8,7 +8,7 @@ Keys:
   shadows     False = Factory's BoxShadow is replaced by a no-op group BEFORE any KV builds an
               elevated widget, so no BoxShadow (and no BoxShadow Fbo) exists at all.
   count       print a `STUB count ...` line after start and after each screen switch.
-  insets      Android: pad the root by the system bar insets (pyjnius); desktop: no-op. The insets are
+  insets      Android: pad the root by the system bar + cutout insets (pyjnius); desktop: no-op. The insets are
               READ and logged always (a number for the overlap); this key only decides the padding.
   autotest    N > 0 = switch screens N times automatically (1.5 s apart), then stop the app.
   autotest_touch  False = autotest switches by code; True = through the REAL input path: the mouse

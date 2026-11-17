@@ -143,17 +143,23 @@ jobs:
       TIMEOUT: ${{ inputs.timeout }}
       PROJECT: ${{ secrets.GCP_PROJECT }}
       SA: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      WIF: ${{ secrets.GCP_WIF_PROVIDER }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      # secrets are masked by GitHub already; the explicit masks also cover derived output (belt and braces)
-      # (repo SECRETS, not variables: a variable in an env: block is printed unmasked in the public log)
-      - name: Mask project + service account
+      # secrets are masked by GitHub already, but only as WHOLE values: the project NUMBER inside
+      # GCP_WIF_PROVIDER is not, and gcloud errors print it ("... in project <number>"). Mask it
+      # before any Google step runs. (Repo SECRETS, not variables: a variable in env: prints unmasked.)
+      # Files we upload / print go through tools/ftl_redact.py (same values + Test Lab bucket names).
+      - name: Mask project, project number + service account
         run: |
           echo "::add-mask::$PROJECT"
           echo "::add-mask::$SA"
+          # fail closed: no number found = stop before any Google step (same rule as tools/ftl_redact.py)
+          if [[ "$WIF" =~ projects/([0-9]+)/ ]]; then echo "::add-mask::${BASH_REMATCH[1]}"
+          else echo '::error::GCP_WIF_PROVIDER holds no projects/<number>/: cannot mask the project number, stopping'; exit 1; fi
 
       - uses: actions/download-artifact@v4
         with:
@@ -201,11 +207,15 @@ jobs:
           # gcloud echoes text from the APK (app name, results): workflow commands off meanwhile
           token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
           echo "::stop-commands::$token"
+          # raw output (bucket name + results path) -> ftl.raw.log, NEVER uploaded or printed;
+          # the log and the uploaded ftl.log get the redacted copy only
           gcloud firebase test android run --project "$PROJECT" --type robo --app "$apk" \
             --device "model=$DEVICE,version=$VERSION,locale=en,orientation=portrait" \
-            --timeout "$TIMEOUT" --robo-script robo.json 2>&1 | tee ftl.log
+            --timeout "$TIMEOUT" --robo-script robo.json 2>&1 | tee ftl.raw.log | python3 -u tools/ftl_redact.py | tee ftl.log
           rc=${PIPESTATUS[0]}
           echo "::$token::"
+          # mask the bucket name(s) for any later step's log output
+          grep -oE 'test-lab-[A-Za-z0-9_-]+' ftl.raw.log | sort -u | while read -r b; do echo "::add-mask::$b"; done
           set -e
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           echo "gcloud exit code: $rc (0 passed, 10 a test failed, 15 inconclusive, 20 infrastructure error)"
@@ -217,22 +227,63 @@ jobs:
         id: copy
         if: always() && steps.ftl.outcome != 'skipped'
         run: |
-          path=$(grep -oE 'storage/browser/[^] ]+' ftl.log | head -1 | sed 's|^storage/browser/||; s|/*$||' || true)
+          # the real path comes from the RAW log (ftl.log has <bucket>); raw copy output -> copy.raw.log (not uploaded)
+          path=$(grep -oE 'storage/browser/[^] ]+' ftl.raw.log | head -1 | sed 's|^storage/browser/||; s|/*$||' || true)
           mkdir -p results
-          if [ -n "$path" ] && gcloud storage cp -r "gs://$path/*" results/ > copy.log 2>&1; then
+          if [ -n "$path" ] && gcloud storage cp -r "gs://$path/*" results/ > copy.raw.log 2>&1; then
             echo "copied=true" >> "$GITHUB_OUTPUT"
           else
             echo "copied=false" >> "$GITHUB_OUTPUT"
             echo "results not copied (no bucket path in the gcloud output, or no read access): see copy.log"
           fi
+          [ ! -f copy.raw.log ] || python3 tools/ftl_redact.py < copy.raw.log > copy.log
           token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
           echo "::stop-commands::$token"
           [ ! -f copy.log ] || tail -5 copy.log
-          find results -type f | head -50
+          # names only reach the log after the privacy scan: here just the count
+          [ ! -d results ] || echo "result files: $(find results -type f | wc -l)"
           echo "::$token::"
 
-      - name: Summary
+      # masks cover the log only: redact the project id / number, service account and bucket names
+      # in EVERY file we upload except images / video (the tool is bytes-safe). The scan, summary + upload run only after this step succeeded.
+      - name: Redact uploaded files
+        id: redact
         if: always() && steps.ftl.outcome != 'skipped'
+        run: |
+          [ ! -d results ] || find results -type f ! \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \) \
+            -print0 | xargs -0 -r python3 tools/ftl_redact.py --inplace
+          python3 tools/ftl_redact.py --inplace ftl.log copy.log
+
+      # fail closed: every file we upload except images / video must hold (a) no privacy_check hit and
+      # (b) no raw project id / number / service account / test-lab- bucket left (ftl_redact.py --check).
+      # Prints file:line + rule only, never a value. Summary + upload run only after this step succeeded.
+      - name: Privacy scan of uploaded files
+        id: scan
+        if: always() && steps.redact.outcome == 'success'
+        run: |
+          files=()
+          if [ -d results ]; then
+            list="$RUNNER_TEMP/scan_list"
+            find results -type f ! \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \) -print0 > "$list" || exit 1
+            mapfile -d '' files < "$list"
+            # the file NAMES are uploaded too (artifact paths, media included): scan them as one more file
+            find results -type f > "$RUNNER_TEMP/result_names.txt" || exit 1
+            files+=("$RUNNER_TEMP/result_names.txt")
+          fi
+          for f in robo.json ftl.log copy.log; do [ ! -f "$f" ] || files+=("$f"); done
+          [ "${#files[@]}" -gt 0 ] || { echo 'nothing to scan'; exit 0; }
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
+          rc=0
+          python3 tools/privacy_check.py --files "${files[@]}" || rc=1
+          python3 tools/ftl_redact.py --check "${files[@]}" || rc=1
+          echo "::$token::"
+          exit "$rc"
+
+      # after the redaction + scan: reads only scanned files; its text goes through the filter AND the same
+      # scan (APK_NAME and inputs are not in any scanned file): a hit = only a fixed line, the step fails
+      - name: Summary
+        if: always() && steps.scan.outcome == 'success'
         env:
           RC: ${{ steps.ftl.outputs.rc }}
           COPIED: ${{ steps.copy.outputs.copied }}
@@ -267,28 +318,27 @@ jobs:
               echo '```'
             fi
             echo "- files: $(find results -type f | wc -l) (artifact devicelab-${GITHUB_RUN_NUMBER}-a${GITHUB_RUN_ATTEMPT})"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | python3 tools/ftl_redact.py > "$RUNNER_TEMP/summary.md"
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
+          rc=0
+          python3 tools/privacy_check.py --files "$RUNNER_TEMP/summary.md" || rc=1
+          python3 tools/ftl_redact.py --check "$RUNNER_TEMP/summary.md" || rc=1
+          echo "::$token::"
+          if [ "$rc" != 0 ]; then echo 'privacy scan failed: summary withheld' >> "$GITHUB_STEP_SUMMARY"; exit 1; fi
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
           echo "$state"
 
-      # masks cover the log only: redact the project id + service account in files we upload
-      - name: Redact project id in uploaded logs
-        if: always() && steps.ftl.outcome != 'skipped'
+      - name: Redaction failed
+        if: always() && (steps.redact.outcome == 'failure' || steps.scan.outcome == 'failure')
+        env:
+          REDACT: ${{ steps.redact.outcome }}
         run: |
-          python3 - <<'PY'
-          import os, pathlib
-          secrets = [s for s in (os.environ.get('SA', ''), os.environ.get('PROJECT', '')) if s]
-          files = [pathlib.Path(p) for p in ('ftl.log', 'copy.log')] + \
-              [p for p in pathlib.Path('results').rglob('*') if p.suffix in ('.txt', '.xml', '.json', '.log', '')]
-          for p in files:
-              if p.is_file():
-                  t = p.read_bytes()
-                  for s in secrets:
-                      t = t.replace(s.encode(), b'<redacted>')
-                  p.write_bytes(t)
-          PY
+          if [ "$REDACT" = failure ]; then echo 'redaction failed: nothing uploaded' >> "$GITHUB_STEP_SUMMARY"
+          else echo 'privacy scan failed: nothing uploaded (file:line in the "Privacy scan" step log)' >> "$GITHUB_STEP_SUMMARY"; fi
 
       - name: Upload results
-        if: always() && steps.ftl.outcome != 'skipped'
+        if: always() && steps.scan.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: devicelab-${{ github.run_number }}-a${{ github.run_attempt }}

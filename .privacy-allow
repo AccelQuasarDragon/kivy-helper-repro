@@ -1,0 +1,7 @@
+# Manual clears (path-glob:line-regex). Each line = one false positive the author read by hand.
+# Keep each line narrow: one folder, one exact string. Never a broad glob or a bare word.
+# Only the spans the regex matches are cleared; the rest of the line is still scanned. Anchor the left side.
+# ([e] keeps this file from matching the rule itself; \\? = also the markdown-escaped form in TESTS.md;
+# paths are as scanned: the shots tree has a shots/ prefix)
+# cleared by hand (author, 2026-11-17): controlP's own relative kv path, not a home dir
+shots/final-report-2026-11-15/*:(?<![\w./-])views/hom[e]/home\\?\.kv

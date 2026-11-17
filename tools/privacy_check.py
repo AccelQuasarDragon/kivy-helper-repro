@@ -7,9 +7,12 @@ a masked value (first 2 chars + ***). Exit 2 on a usage / git error.
   uv run --no-project tools/privacy_check.py                       # tree HEAD + all commits of HEAD
   uv run --no-project tools/privacy_check.py --tree X --commits 'A..B'
   uv run --no-project tools/privacy_check.py --pre-push < ref-lines   # git pre-push stdin
+  python3 tools/privacy_check.py --files PATH...   # plain files outside git (devicelab output); prints file:line: rule only;
+                                                   # only .privacy-allow applies there (the inline marker does not)
 
 False positives: put `privacy-check: allow` on the line, or add `path-glob:line-regex` to
-.privacy-allow (repo root, # comments). Never weaken a rule.
+.privacy-allow (repo root, # comments): only the spans the regex matches are cleared, the rest of
+the line is still scanned. Never weaken a rule.
 Rules are generic on purpose: private, person-specific patterns belong in a local guard, not here.
 """
 import argparse
@@ -57,9 +60,9 @@ def email_ok(addr, line):
     return addr.lower() == 'noreply@anthropic.com' and bool(COAUTHOR.match(line))  # privacy-check: allow
 
 
-def line_hits(line):
-    """(rule, matched value) pairs for one line of text."""
-    if MARKER in line:
+def line_hits(line, marker=True):
+    """(rule, matched value) pairs for one line of text (marker=False: the inline MARKER is ignored)."""
+    if marker and MARKER in line:
         return []
     hits = [('email', m.group()) for m in EMAIL.finditer(line) if not email_ok(m.group(), line)]
     for name, rx in RULES:
@@ -85,8 +88,13 @@ def load_allow(root):
     return rules
 
 
-def allowed(allow, path, line):
-    return any(fnmatch.fnmatch(path, g) and rx.search(line) for g, rx in allow)
+def strip_allowed(allow, path, line):
+    """The line minus every span an allow rule for this path matched: only those exact strings are cleared,
+    for every rule; whatever else is on the line is still scanned."""
+    for g, rx in allow:
+        if fnmatch.fnmatch(path, g):
+            line = rx.sub(' ', line)
+    return line
 
 
 def scan_tree(rev, allow, out):
@@ -99,10 +107,23 @@ def scan_tree(rev, allow, out):
         if b'\0' in blob[:8192]:
             continue  # binary
         for n, line in enumerate(blob.decode('utf-8', 'replace').splitlines(), 1):
-            if allowed(allow, name, line):
-                continue
-            for rule, val in line_hits(line):
+            for rule, val in line_hits(strip_allowed(allow, name, line)):
                 out.append(f'{name}:{n}: {rule}: {mask(val)}')
+
+
+def scan_files(paths, allow, out):
+    """Plain files, bytes-safe (binary is scanned too: fail closed); a missing file is a hit. No value is printed."""
+    for path in paths:
+        try:
+            with open(path, 'rb') as f:
+                data = f.read()
+        except OSError:
+            out.append(f'{path}: unreadable')
+            continue
+        for n, line in enumerate(data.decode('utf-8', 'replace').splitlines(), 1):
+            # untrusted output (an app can log any string): the inline MARKER does not apply here
+            for rule in dict.fromkeys(r for r, _ in line_hits(strip_allowed(allow, path, line), marker=False)):
+                out.append(f'{path}:{n}: {rule}')
 
 
 def scan_commits(revlist, allow, out):
@@ -113,9 +134,7 @@ def scan_commits(revlist, allow, out):
             if not (NOREPLY_GH.match(addr) or addr.lower() in IDENTITY_OK):
                 out.append(f'commit {sha[:12]}: {who}-email: {mask(addr)}')
         for n, line in enumerate(body.splitlines(), 1):
-            if allowed(allow, f'commit:{sha}', line):
-                continue
-            for rule, val in line_hits(line):
+            for rule, val in line_hits(strip_allowed(allow, f'commit:{sha}', line)):
                 out.append(f'commit {sha[:12]} msg:{n}: {rule}: {mask(val)}')
 
 
@@ -140,7 +159,15 @@ def main():
     ap.add_argument('--commits', action='append', default=[],
                     help='git log revision args, space separated, e.g. "A..B" (repeatable; default HEAD)')
     ap.add_argument('--pre-push', action='store_true', help='read git pre-push ref lines from stdin')
+    ap.add_argument('--files', nargs='+', metavar='PATH', help='scan these plain files only (no git trees / commits)')
     a = ap.parse_args()
+    if a.files:
+        out = []
+        scan_files(a.files, load_allow('.'), out)
+        for line in out:
+            print(line)
+        print(f'privacy_check: {len(out)} hit(s); files={len(a.files)}', file=sys.stderr)
+        return 1 if out else 0
     root = git('rev-parse', '--show-toplevel').decode().strip()
     os.chdir(root)
     allow = load_allow(root)

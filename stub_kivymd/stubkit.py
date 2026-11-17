@@ -132,7 +132,8 @@ def gl_line() -> None:
 
 
 def read_insets():
-    """(top, bottom, left, right) system bar insets in px, or None off Android / before attach."""
+    """(top, bottom, left, right) insets in px = system bars + display cutout (max per side), or None
+    off Android / before attach. Also prints `STUB insets parts bars=t,b,l,r cutout=t,b,l,r`."""
     try:
         from jnius import autoclass
     except Exception:  # noqa: BLE001 - desktop
@@ -142,11 +143,24 @@ def read_insets():
         ins = activity.getWindow().getDecorView().getRootWindowInsets()
         if ins is None:
             return None
-        if autoclass('android.os.Build$VERSION').SDK_INT >= 30:
-            bars = ins.getInsets(autoclass('android.view.WindowInsets$Type').systemBars())
-            return bars.top, bars.bottom, bars.left, bars.right
-        return (ins.getSystemWindowInsetTop(), ins.getSystemWindowInsetBottom(),
-                ins.getSystemWindowInsetLeft(), ins.getSystemWindowInsetRight())
+        sdk = autoclass('android.os.Build$VERSION').SDK_INT
+        if sdk >= 30:
+            types = autoclass('android.view.WindowInsets$Type')
+            bars_i = ins.getInsets(types.systemBars())
+            cut_i = ins.getInsets(types.displayCutout())
+            both = ins.getInsets(types.systemBars() | types.displayCutout())  # Type ints OR together
+            bars = (bars_i.top, bars_i.bottom, bars_i.left, bars_i.right)
+            cutout = (cut_i.top, cut_i.bottom, cut_i.left, cut_i.right)
+            total = (both.top, both.bottom, both.left, both.right)
+        else:
+            bars = (ins.getSystemWindowInsetTop(), ins.getSystemWindowInsetBottom(),
+                    ins.getSystemWindowInsetLeft(), ins.getSystemWindowInsetRight())
+            dc = ins.getDisplayCutout() if sdk >= 28 else None  # API 28+; None = no cutout
+            cutout = ((dc.getSafeInsetTop(), dc.getSafeInsetBottom(),
+                       dc.getSafeInsetLeft(), dc.getSafeInsetRight()) if dc is not None else (0, 0, 0, 0))
+            total = tuple(max(a, b) for a, b in zip(bars, cutout))
+        print(f'STUB insets parts bars={",".join(map(str, bars))} cutout={",".join(map(str, cutout))}')
+        return total
     except Exception as e:  # noqa: BLE001 - diagnostics only
         print('STUB insets error', repr(e))
         return None

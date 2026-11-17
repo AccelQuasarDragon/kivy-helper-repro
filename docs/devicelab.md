@@ -27,7 +27,15 @@ Until the 3 repo secrets below exist, the workflow does nothing: it prints a lin
 10. It copies the results from Test Lab's default bucket (logcat, screenshots, video) into the run artifact.
 11. Summary, first line: `APP OK` / `CRASH` / `APP STATE UNKNOWN`.
 12. CRASH = logcat has `Fatal signal`, a `DEBUG` crash dump line, `backtrace:` or `Python for android ended`.
-13. The project id and the service account are masked in the log and redacted in the uploaded files.
+13. Masked in the log (GitHub `add-mask`): the project id, the service account, the project number (parsed from
+    `GCP_WIF_PROVIDER` before any Google step; no `projects/<number>/` in it = the job stops there) and the
+    Test Lab bucket name (once gcloud has printed it).
+14. The raw gcloud output stays on the runner (`ftl.raw.log`, `copy.raw.log`: never uploaded or printed).
+15. The log, the summary, `ftl.log`, `copy.log` and every uploaded result file except images / video get a
+    redacted copy (`tools/ftl_redact.py`): service account -> `<redacted-sa>`, project id -> `<redacted-project>`,
+    project number -> `<redacted-number>`, `test-lab-...` -> `<redacted-bucket>`.
+16. Not redacted: screenshots and video (`png jpg jpeg webp mp4 webm`), and anything that names Google Cloud in
+    another form. If redaction fails, nothing is uploaded and the summary says only that.
 
 Inputs: `label`, `artifact_run` + `artifact_name` (an APK artifact of a run of THIS repo, e.g. `build-<n>` of an
 inspect build), `device` (default `redfin`), `version` (default `30`), `taps` (`x,y[,wait_s]` separated by `;`,
@@ -88,6 +96,8 @@ Use a project id that says nothing about you (it is masked in logs, but still).
    - Undo: delete the secrets. The workflow goes back to "NOT SET UP".
 9. **List the devices** (Cloud Shell in the console, nothing to install): `gcloud firebase test android models list`
    - Look for `redfin` with API 30. If it is gone, pick another Adreno 6xx phone and pass it as `device` / `version`.
+   - Never paste Cloud Shell output anywhere (it shows your Google email and project id).
+     Report only "API 30: yes/no".
 10. **First run:** Actions -> "device lab" -> Run workflow, with an APK artifact you already have.
 
 ## Undo everything
@@ -96,8 +106,12 @@ Deleting the project deletes the service account, the pool, the APIs and the res
 
 ## Privacy (public repo)
 - Logs and artifacts of this public repo are readable by anyone.
-- The 3 values are repo secrets, so GitHub masks them in the log; the workflow also redacts the project id and
-  the service account email in the files it uploads.
+- The 3 values are repo secrets, so GitHub masks each WHOLE value in the log. A part of one (the project
+  number inside `GCP_WIF_PROVIDER`) is not masked by GitHub: the workflow masks it itself (What the workflow does, 13).
+- The workflow redacts the project id, project number, service account email and Test Lab bucket names in the
+  log, the summary and every file it uploads except images and video (13-16).
+- An automatic scan then runs on everything uploaded, the file names and the summary (privacy_check rules + any raw id / number / account / bucket
+  left; fails closed: nothing uploaded). Screenshots and video are NOT scanned: read them by hand (or a reviewer) after each run.
 - FTL phones are Google's lab phones: their logcat has no data of yours or the reporter's.
 
 ## Design decisions (dated)
