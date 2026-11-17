@@ -176,6 +176,8 @@ An emulator on a CI runner has no such player, so:
     `STUB insets top= bottom= left= right= applied=<bool>` (px; `n/a` = not readable, e.g. desktop),
     so the overlap has a logged number in every run. `insets: true` also PADS the root by them
     (`applied=True`). (Before 2026-11-15 push 2, `insets: false` skipped the read and printed 0.)
+    The reader asks `systemBars() | displayCutout()` (a camera cutout is not a system bar; since
+    2026-11-17) and first prints `STUB insets parts bars=t,b,l,r cutout=t,b,l,r` so a run shows which part sets the inset.
   - `autotest: N`: N automatic switches 1.5 s apart, then the app stops (desktop checks).
     `autotest_touch: true` switches through the REAL input path instead of code: the mouse moves
     onto the big card (KivyMD hover) and a touch down/up goes through the EventLoop

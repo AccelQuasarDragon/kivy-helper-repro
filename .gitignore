@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 # chat / night notes stay local (the committed runs/*.txt excerpts are cited upstream and stay tracked)
 runs/*.md
+# ON PURPOSE (author, 2026-11-17): chats' throwaway helper scripts (dispatch / watch / generator scripts) stay local
+runs/scratch_keep/
+# ON PURPOSE (author, 2026-11-17): report.yml spec inputs are pasted into the form; their content is already
+# public as shots/<slug>/ (index.html, TESTS.md, sheet.png), so a copy on main adds nothing
+runs/*.json
+# ON PURPOSE (author, 2026-11-17): raw `gcloud firebase test android models list` dump (re-list before each question)
+runs/firebase_devices.txt
