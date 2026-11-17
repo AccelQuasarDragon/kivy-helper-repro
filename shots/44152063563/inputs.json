@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44152063563",
+ "inputs": {
+  "label": "bisect5 kit on profile pixel_5: START tap lands? (pre-check for device run 2, no build)",
+  "apk_url": "",
+  "artifact_run": "43747921162",
+  "artifact_name": "build-2-bisect5-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "35",
+  "profile": "pixel_5",
+  "taps": "540,2000,45",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
