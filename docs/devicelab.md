@@ -110,6 +110,9 @@ Deleting the project deletes the service account, the pool, the APIs and the res
   number inside `GCP_WIF_PROVIDER`) is not masked by GitHub: the workflow masks it itself (What the workflow does, 13).
 - The workflow redacts the project id, project number, service account email and Test Lab bucket names in the
   log, the summary and every file it uploads except images and video (13-16).
+- The APK (Test Lab copies it into the results) and `.pb` files (binary protobuf) are deleted right after the
+  copy: never scanned, never uploaded. Emails, the lab account's user names and `/home/<name>` paths in the text
+  results become `<email>`, `<account>`, `/home/<home>` before the scan (device run 1 failed closed on them).
 - An automatic scan then runs on everything uploaded, the file names and the summary (privacy_check rules + any raw id / number / account / bucket
   left; fails closed: nothing uploaded). Screenshots and video are NOT scanned: read them by hand (or a reviewer) after each run.
 - FTL phones are Google's lab phones: their logcat has no data of yours or the reporter's.

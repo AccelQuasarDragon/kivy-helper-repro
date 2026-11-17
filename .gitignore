@@ -10,3 +10,8 @@ runs/scratch_keep/
 runs/*.json
 # ON PURPOSE (author, 2026-11-17): raw `gcloud firebase test android models list` dump (re-list before each question)
 runs/firebase_devices.txt
+# ON PURPOSE (author, 2026-11-17): raw device-lab logs (Test Lab console downloads) stay local; only scanned excerpts get tracked
+runs/DL*crash*.txt
+runs/DL*_log*.txt
+# scanned excerpts of those logs ARE tracked (the line above would hide them)
+!runs/DL*_excerpt.txt

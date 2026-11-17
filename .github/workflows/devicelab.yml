@@ -223,7 +223,7 @@ jobs:
       # Results live in Test Lab's DEFAULT bucket of the project (Spark: no custom --results-bucket).
       # Copying them needs read access to that bucket (Editor has it); if the copy fails, the summary
       # says so and the results stay readable in the Firebase console (free).
-      - name: Copy results (logcat, screenshots, video)
+      - name: Copy results (logcat, screenshots, video; no .apk / .pb)
         id: copy
         if: always() && steps.ftl.outcome != 'skipped'
         run: |
@@ -236,6 +236,13 @@ jobs:
             echo "copied=false" >> "$GITHUB_OUTPUT"
             echo "results not copied (no bucket path in the gcloud output, or no read access): see copy.log"
           fi
+          # never kept or uploaded: the input APK (Test Lab copies it into the results) and binary protobuf
+          # results (*.pb): binary bytes cannot be redacted and match the privacy patterns. Deleted right
+          # after the copy, before redaction / scan / upload (no copy-time exclude flag relied on: unverified on this gcloud).
+          find results -type f \( -iname '*.apk' -o -iname '*.pb' \) -delete
+          if [ -n "$(find results -type f \( -iname '*.apk' -o -iname '*.pb' \) -print -quit)" ]; then
+            echo '::error::an .apk / .pb result file is left after the delete: stopping'; exit 1
+          fi
           [ ! -f copy.raw.log ] || python3 tools/ftl_redact.py < copy.raw.log > copy.log
           token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
           echo "::stop-commands::$token"
@@ -244,15 +251,21 @@ jobs:
           [ ! -d results ] || echo "result files: $(find results -type f | wc -l)"
           echo "::$token::"
 
-      # masks cover the log only: redact the project id / number, service account and bucket names
-      # in EVERY file we upload except images / video (the tool is bytes-safe). The scan, summary + upload run only after this step succeeded.
+      # masks cover the log only: redact the project id / number, service account and bucket names, plus any
+      # email, the user names of those emails (Test Lab's lab account) and /home/<name> paths, in EVERY file we
+      # upload except images / video (the tool is bytes-safe). ONE call: the user names are collected across
+      # the whole file set. The scan, summary + upload run only after this step succeeded.
       - name: Redact uploaded files
         id: redact
         if: always() && steps.ftl.outcome != 'skipped'
         run: |
-          [ ! -d results ] || find results -type f ! \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \) \
-            -print0 | xargs -0 -r python3 tools/ftl_redact.py --inplace
-          python3 tools/ftl_redact.py --inplace ftl.log copy.log
+          files=()
+          if [ -d results ]; then
+            list="$RUNNER_TEMP/redact_list"
+            find results -type f ! \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \) -print0 > "$list" || exit 1
+            mapfile -d '' files < "$list"
+          fi
+          python3 tools/ftl_redact.py --inplace "${files[@]}" ftl.log copy.log
 
       # fail closed: every file we upload except images / video must hold (a) no privacy_check hit and
       # (b) no raw project id / number / service account / test-lab- bucket left (ftl_redact.py --check).
@@ -262,6 +275,11 @@ jobs:
         if: always() && steps.redact.outcome == 'success'
         run: |
           files=()
+          # fail closed here too: redact runs even when the copy step failed, so an .apk / .pb left by a
+          # failed delete must still block the upload
+          if [ -d results ] && [ -n "$(find results -type f \( -iname '*.apk' -o -iname '*.pb' \) -print -quit)" ]; then
+            echo '::error::an .apk / .pb result file is present: nothing uploaded'; exit 1
+          fi
           if [ -d results ]; then
             list="$RUNNER_TEMP/scan_list"
             find results -type f ! \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \) -print0 > "$list" || exit 1
