@@ -148,15 +148,51 @@ Why: their app crashes on a Pixel 5 (Adreno 620, Android 11) about 60 ms into in
 The kit above did not crash, so this goes top-down: their full app, with groups of its UI switched off.
 
 ## The rule
-A variant = the SET of groups switched off. Every build: their pinned commit + `demo_device.diff;shadows_on.diff;bisect_toggles.diff`
-(in that order; the TopView BoxShadows stay ON in every variant, shadows are tested last), `android.api=34`, fat APK (x86_64 added), cache off.
-Groups (`app_config` keys; default = as shipped):
+A variant = a point (groups off, ripple toggles, shadows). Every build: their pinned commit + `demo_device.diff;shadows_on.diff;bisect_toggles.diff`
+(shadows on: the TopView BoxShadows draw) or `demo_device.diff;bisect_toggles.diff` (shadows off = as controlP ships; it disables shadows),
+`android.api=34`, fat APK (x86_64 added), cache off. B0-B5 and T1/T2/W are shadows on, S0 is shadows off.
+Groups (`app_config` keys; default = as shipped; always written):
 - `input_fx: false` = input list rows lose the ripple, the list gets a plain scroll effect (no overscroll stretch), the list stops relabelling on choose.
 - `menu: false` = explore's MenuView (MDRecycleView) becomes an empty widget.
 - `bottom: false` = every BottomView becomes an empty spacer of the same height (taps unchanged).
 - `topbar: false` = every TopView loses its title + power button; the app bar itself (and its BoxShadow) stays.
 - `transition: "No"` = NoTransition instead of KivyMD's MDSharedAxis (empty = keep).
 All of it is applied 0.5 s after start, after the widgets are built (so they are still constructed once).
+Ripple toggles (`app_config` keys, written only when not the default; patched on the KivyMD classes at import, BEFORE
+the app builds, so they reach every widget incl. ones made later, e.g. recycled explore items). KivyMD read: master a00c10c.
+What the stock widgets really run (KivyMD a00c10c `kivymd/uix/behaviors/ripple_behavior.py`): lines 1024-1025 rebind
+`RectangularRippleBehavior = M3RectangularRippleBehavior` and `CircularRippleBehavior = M3CircularRippleBehavior`, so
+MDListItem (InputItem, MenuItem), its avatar, MDIconButton and MDButton all use `M3CommonRipple` (634); the old
+stencil-only classes at 485 / 561 are dead code. M3CommonRipple gives every widget a PRIVATE Fbo when it is made
+(`init_fbos` 697-708): `Fbo(size=50x50)` first, then `set_shader` (721-728) assigns `fbo.shader.fs` = ripple.glsl, i.e.
+the shader is set AFTER the Fbo exists (the kivy#8098 pattern, a known old-Adreno crash). A tap adds, 1/30 s after touch
+down (`call_ripple_animation_methods`), the Fbo + StencilPush, mask shape, StencilUse, Color, the Fbo texture as a
+Rectangle (Ellipse for the avatar), StencilUnUse, unmask shape, StencilPop to `canvas.after` (768-802, group
+`m3_ripple_behavior`); `_update_uniforms` (877-960, every frame and also inside each anim_complete) sets the shader
+uniforms, resizes the Fbo to the widget (the first time at the tap itself, 50x50 -> widget size; `_call_ripple_animation_methods`
+751 calls anim_complete before laying) and asks it to redraw; `anim_complete` (979-989) removes the group. So a tap = an Fbo
+first drawn ~33 ms + a frame after touch down, close to the ~60 ms crash time (a fit, not a proof).
+- `ripple_fbo_fs: "create"` = `M3CommonRipple.init_fbos` replaced: the Fbo gets the ripple shader AT CREATION
+  (`Fbo(size=..., group=..., fs=RIPPLE_FS_STRING)`, the string loaded exactly as set_shader loads it) and no `shader.fs`
+  is assigned later. set_shader has no other caller and the Fbo is never re-created (only resized), so no later fs set is
+  left on this path (except Kivy's own `Shader.reload()` after a GL context loss, same as BoxShadow). Tests the #8098
+  hypothesis; if it is clean it is a candidate upstream fix (a one-line change in KivyMD). Both halves of kivy#8098 fit:
+  ripple.glsl sets `gl_FragColor` without `texture2D` (the shader shape that crashed on Adreno there), and its update says
+  passing `fs` to `Fbo()` at creation avoids the crash.
+- `ripple_stencil: false` = `M3CommonRipple.lay_canvas_instructions` replaced by the same minus StencilPush, mask shape,
+  StencilUse, StencilUnUse, unmask shape, StencilPop: the Fbo, Color and textured Rectangle/Ellipse stay, same group, so
+  anim_complete still removes all of it. The ripple is no longer clipped to rounded corners (it fills the widget box).
+  The list's own ScrollView clip (a StencilView) STAYS: this removes the ripple's stencil, not every stencil.
+- `list_ripple: false` = `ripple_effect` False on every `BaseListItem` (MDListItem, InputItem, MenuItem), set right after
+  its `__init__`; a tap then adds nothing. Nothing else: unlike `input_fx`, scroll effects, observers and the state layer
+  stay; the avatar's ripple stays too (not a list item; DL1's taps at x=540 do not hit it). Each list item still MAKES its
+  ripple Fbo (with the late shader set) in `__init__`; it is just never drawn.
+Runtime evidence (desktop Windows, Kivy 2.3.1 + KivyMD a00c10c, real GL window, NOT a phone):
+`uv run --script tools/ripple_runtime_check.py` builds MDListItem + avatar, MDIconButton, MDButton per mode and runs one
+ripple each. Result 74/74 PASS: every widget resolves to M3CommonRipple and gets the patched methods; shipped = Fbo made
+without fs and `shader.fs` changed after creation on all 4; `create` = fs given at creation and never changed; stencil off
+= the tap adds `Fbo, Color, BindTexture, Rectangle|Ellipse` and no Stencil*; list off = MDListItem adds nothing (the other
+3 unchanged); in every mode anim_complete removes everything the tap added.
 
 | variant | off | if it crashes / stays clean |
 |---|---|---|
@@ -166,22 +202,42 @@ All of it is applied 0.5 s after start, after the widgets are built (so they are
 | B3 | input_fx | crash = menu / clean = input_fx |
 | B4 | menu | splits B1 the other way |
 | B5 | B2 + transition | the smallest app still holding the BoxShadows |
+| S0 | nothing, shadows OFF | the reporter's shipped config: crash = the BoxShadow Fbo is NOT needed / clean = it is (with B0) |
+| T1 | `ripple_fbo_fs: "create"` | clean = the late shader set on the ripple Fbo (kivy#8098 pattern) is needed: candidate KivyMD fix / crash = it is not |
+| T2 | `ripple_stencil: false` | clean = the ripple's stencil mask is needed (fix: stencil-free ripple or a Kivy stencil reset) / crash = it is not |
+| W | `list_ripple: false` | clean = turning all list ripples off avoids it: the workaround candidate for the app |
 
 One clean run proves little (repeat any single clean). The last step is the smallest crashing set WITHOUT `shadows_on.diff`.
+T1, T2 and W change one thing each against B0 (shadows on, all groups on); S0 changes only the shadows. Compare each with B0.
+Not isolated by any variant: the per-frame Fbo resize / redraw of the ripple itself (if T1 and T2 both still crash and W is clean).
 
 ## Run it
-1. Matrix: `uv run --no-project tools/controlp_bisect.py --only B1` -> paste as `builds` in Actions -> "build matrix" (label e.g. `controlP bisect B1`).
+1. Matrix: `uv run --no-project tools/controlp_bisect.py --only B1` (no `--only` = B0-B5; the ripple round = `--only S0,T1,T2,W`) -> paste as `builds` in Actions -> "build matrix" (label e.g. `controlP bisect B1`).
 2. Gate + phone: `uv run --no-project tools/controlp_bisect.py <matrix run ID> <matrix run number> --only B1 [--attempt N]`
    prints per variant one inspect.yml JSON (emulator gate) and one devicelab.yml JSON (Pixel 5 `redfin`, API 30).
    Taps: `540,2000,5` first (a blank spot on Home; meant to dismiss an open notification shade, UNVERIFIED: check the video), then DL1's taps.
 3. Gate PASS: logcat has `STUB bisect cfg` and one `STUB bisect off=<group> n=` per off group (n > 0; B5's transition logs `STUB bisect transition NoTransition` instead), `FAKEPIONEER <- 44FN`,
    `STUB bisect current=explore`, no traceback, and the last screenshot shows explore. Then the devicelab run.
+   Ripple variants also need (EXPECTED lines, from the desktop run; never seen in logcat yet):
+   T1 `STUB bisect ripple_fbo_fs=create patched=M3CommonRipple.init_fbos` at start and `STUB bisect ripple_fbo_fs=create n=` (n > 0) at setup;
+   T2 `STUB bisect ripple_stencil=off patched=M3CommonRipple.lay_canvas_instructions` and at least one
+   `STUB bisect ripple_stencil=off drawn=<class> n=` (a tap reached the patched ripple; a widget's FIRST tap prints 2, KivyMD lays it twice);
+   W `STUB bisect list_ripple=off patched=BaseListItem.__init__` and `STUB bisect list_ripple=off n=` (n > 0).
+   S0: the `STUB count` lines show `boxshadow=0` (shadows off).
 
 ## Log lines (logcat tag python)
 `STUB bisect cfg {...} file=true|false`, `STUB bisect off=<group> n=<items changed>`, `STUB bisect transition <class>`,
 `STUB bisect current=<screen> t=<monotonic s>` (each switch, at the moment `current` is set), then `STUB count screen=<s> boxshadow= fbo_boxshadow= elevated= fbo=`
 for the arriving screen (and for every screen once at setup). `STUB bisect warn ...` = an attribute was missing; the app went on.
+Ripple: `STUB bisect ripple_fbo_fs=create|ripple_stencil=off|list_ripple=off patched=<class.method>` (at import, once per active toggle),
+`STUB bisect ripple_stencil=off drawn=<widget class> n=<k>` (each stencil-free ripple laid = each tap on a ripple widget),
+`STUB bisect ripple_fbo_fs=create n=<ripple Fbos made so far>` and `STUB bisect list_ripple=off n=<list items so far>`
+(at setup; widgets made later, e.g. recycled items, are covered but not counted there).
 
 ## Untested
-Nothing has run on GitHub or Android yet. `_bisect.py` is only compiled locally (no Kivy run): the attribute names come from
+Nothing has run on GitHub or Android yet. The controlP part of `_bisect.py` is only compiled locally; the ripple toggles
+also ran on desktop Kivy (below). The controlP attribute names come from
 their source at the pinned commit and KivyMD master a00c10c, which the build fetches unpinned (check it is unchanged).
+The ripple toggles: checked against KivyMD a00c10c's source by ast (tests/test_controlp_bisect.py, aliases followed) and run
+on desktop only (tools/ripple_runtime_check.py, Kivy 2.3.1 where the build uses 2.3.2; desktop GL, not Adreno). Not run inside
+controlP, on the emulator or on a phone. Whether the S0/T1/T2/W gates pass, and what the phone shows, is unknown until they run.

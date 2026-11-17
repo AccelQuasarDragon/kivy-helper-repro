@@ -2,21 +2,29 @@
 # Upstream: yabb85/controlP commit cad5d5c626516dcbf18719194c92e63f06128d62 (branch dev). App dir src/.
 # Used by build.yml input `patches` (git apply --verbose in the fetched repo root, before the spec).
 # git apply ignores this text before the first "diff --git" line.
-# Apply AFTER demo_device.diff + shadows_on.diff (generated against that tree); also combines with insets_fix.diff.
+# Apply AFTER demo_device.diff, with or without shadows_on.diff (generated on demo_device + shadows_on; its main.py
+# hunk is at line ~5, shadows_on's at ~33, so both orders of the tree apply); also combines with insets_fix.diff.
+# KivyMD read for the ripple patches: master a00c10c385064afb3a46b3a10d1d2c0c6505dc48 (the build fetches master unpinned).
 # What it does:
 # - Adds src/controlp/_bisect.py and ONE import line near the top of src/main.py.
 # - _bisect.py reads app_config.json next to main.py (build.yml input `app_config`), wraps ControlPApp.on_start,
 #   and 0.5 s after start turns OFF the groups set false: input_fx, menu, bottom, topbar; `transition` = a name.
+# - Ripple toggles, patched on KivyMD's M3CommonRipple (what every stock ripple widget runs: ripple_behavior.py
+#   1024-1025 alias the old names to the M3 classes) at import, before the app builds; reaches recycled items:
+#   ripple_fbo_fs "create" (init_fbos: shader given to Fbo() at creation, no later shader.fs set),
+#   ripple_stencil false (lay_canvas_instructions without its stencil mask), list_ripple false (BaseListItem.ripple_effect).
 # - Defaults = the app as shipped. Missing attributes print `STUB bisect warn` and the app goes on.
-# - Logs (logcat tag python): STUB bisect cfg / off=<group> n= / transition / current=<screen> t= / STUB count.
+# - Logs (logcat tag python): STUB bisect cfg / off=<group> n= / transition / current=<screen> t= / STUB count;
+#   STUB bisect ripple_fbo_fs=create|ripple_stencil=off|list_ripple=off patched=<what>; ripple_stencil=off drawn= n=;
+#   ripple_fbo_fs=create n= / list_ripple=off n=. Desktop runtime check: tools/ripple_runtime_check.py.
 # Matrix JSON: tools/controlp_bisect.py; docs/bisect.md "controlP top-down bisect".
 
 diff --git a/src/controlp/_bisect.py b/src/controlp/_bisect.py
 new file mode 100644
-index 0000000..12dbfd4
+index 0000000..f23de8a
 --- /dev/null
 +++ b/src/controlp/_bisect.py
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,378 @@
 +"""controlP top-down bisect toggles (added by kivy-helper-repro patches/controlp/bisect_toggles.diff).
 +
 +Imported once from main.py. Reads app_config.json next to main.py (build.yml `app_config` input) and,
@@ -28,6 +36,13 @@ index 0000000..12dbfd4
 +  topbar     false = every TopView loses its title + trailing power button; the MDTopAppBar shell stays
 +  transition ''    = keep KivyMD's (MDSharedAxis); else a Kivy screenmanager or KivyMD transition
 +                     name without 'Transition' (No, Fade, MDSlide, ...), applied 0.5 s after start
++Ripple toggles (class-level KivyMD patches made at import, BEFORE the app builds, so they also reach
++widgets made later, e.g. recycled MDRecycleView items):
++  ripple_fbo_fs  ''   = shipped; 'create' = the M3 ripple's Fbo gets its shader at creation (Fbo(fs=...))
++                     instead of a later fbo.shader.fs assignment (the kivy#8098 pattern)
++  ripple_stencil false = the M3 ripple draws its Fbo texture without its stencil mask (no StencilPush /
++                     mask / StencilUse / StencilUnUse / unmask / StencilPop); same group, Fbo and animation
++  list_ripple    false = ripple_effect False on every BaseListItem (MDListItem and subclasses), nothing else
 +Defaults = the app as shipped. Unknown keys are printed and ignored. Never raises: a missing attribute
 +prints `STUB bisect warn ...` and the app goes on. Logcat tag python, lines start with `STUB `.
 +"""
@@ -35,7 +50,8 @@ index 0000000..12dbfd4
 +import time
 +from pathlib import Path
 +
-+DEFAULTS = {'input_fx': True, 'menu': True, 'bottom': True, 'topbar': True, 'transition': ''}
++DEFAULTS = {'input_fx': True, 'menu': True, 'bottom': True, 'topbar': True, 'transition': '',
++            'ripple_fbo_fs': '', 'ripple_stencil': True, 'list_ripple': True}
 +FALSE = {'0', 'false', 'off', 'no', ''}
 +DELAY = 0.5  # s after on_start: after MDScreenManager.check_transition and the appbars' own Clock adds
 +
@@ -225,6 +241,108 @@ index 0000000..12dbfd4
 +        warn(f'count failed {e!r}')
 +
 +
++# ---- ripple toggles: class-level patches of KivyMD a00c10c kivymd/uix/behaviors/ripple_behavior.py ----
++# There, lines 1024-1025 rebind RectangularRippleBehavior = M3RectangularRippleBehavior and CircularRippleBehavior =
++# M3CircularRippleBehavior, so every stock ripple widget (MDListItem, its avatar, MDIconButton, MDButton) runs
++# M3CommonRipple (634): a private Fbo with the ripple shader, drawn through a stencil mask. The M3 subclasses
++# override only _get_shape_kind, so patching M3CommonRipple reaches all of them (and widgets made later).
++RIPPLE = {'drawn': 0, 'fbo_create': 0, 'list_off': 0}
++M3_GROUP = 'm3_ripple_behavior'
++
++
++def ripple_module():
++    import kivymd.uix.behaviors.ripple_behavior as rb
++    return rb
++
++
++def m3_init_fbos_fs_at_create(self) -> None:
++    """M3CommonRipple.init_fbos (697-708) with the ripple shader given to Fbo() at creation (fs=) instead of
++    set_shader() assigning fbo.shader.fs after it (721-728; the kivy#8098 pattern). The string is loaded exactly
++    as set_shader loads it (module global RIPPLE_FS_STRING = '$HEADER$' line + ripple.glsl). set_shader has no
++    other caller, and the Fbo is never re-created (_update_uniforms only resizes it, line 955), so no fs is set later."""
++    rb = ripple_module()
++    if rb.RIPPLE_FS_STRING is None:
++        with open(rb.M3_RIPPLE_FS, 'r', encoding='utf-8') as shader_file:
++            rb.RIPPLE_FS_STRING = '$HEADER$\n' + shader_file.read()
++    self._phase = 0.0
++    self.ripple_pos = (0, 0)
++    self.fbo = rb.Fbo(size=[50] * 2, group=M3_GROUP, fs=rb.RIPPLE_FS_STRING)
++    with self.fbo:
++        rb.ClearColor(0, 0, 0, 0)
++        rb.ClearBuffers()
++        rb.Color(1, 1, 1, 1)
++        self.rect = rb.Rectangle(pos=(0, 0), size=[50] * 2)
++    RIPPLE['fbo_create'] += 1
++
++
++def m3_ripple_no_stencil(self) -> None:
++    """M3CommonRipple.lay_canvas_instructions (768-802) minus StencilPush, the mask shape, StencilUse, StencilUnUse,
++    the unmask shape and StencilPop. Keeps the Fbo, Color and the textured Rectangle/Ellipse, all in group
++    m3_ripple_behavior, so M3's anim_complete (979-989) still removes everything."""
++    rb = ripple_module()
++    if not self.ripple_effect:
++        return
++    with self.active_canvas:
++        self.active_canvas.add(self.fbo)
++        instr_params = {
++            'size': self.size,
++            'pos': self.pos,
++            'group': M3_GROUP,
++        }
++        shape_kind = self._get_shape_kind()
++        # Real render is here.
++        rb.Color(1, 1, 1, 1, group=M3_GROUP)
++        if shape_kind == 1.0:
++            rb.Ellipse(**instr_params, texture=self.fbo.texture)
++        else:
++            rb.Rectangle(**instr_params, texture=self.fbo.texture)
++    RIPPLE['drawn'] += 1  # one line per tap: the gate sees the patched path ran
++    print(f'STUB bisect ripple_stencil=off drawn={type(self).__name__} n={RIPPLE["drawn"]}')
++
++
++def patch_ripple_fbo_fs() -> str:
++    rb = ripple_module()
++    rb.M3CommonRipple.init_fbos = m3_init_fbos_fs_at_create
++    return 'M3CommonRipple.init_fbos'
++
++
++def patch_ripple_stencil() -> str:
++    rb = ripple_module()
++    rb.M3CommonRipple.lay_canvas_instructions = m3_ripple_no_stencil
++    return 'M3CommonRipple.lay_canvas_instructions'
++
++
++def patch_list_ripple() -> str:
++    # After the shipped __init__ (kv rules are applied inside it); RecycleView data here has no ripple key.
++    from kivymd.uix.list import BaseListItem
++    shipped = BaseListItem.__init__
++
++    def __init__(self, *args, **kwargs):
++        shipped(self, *args, **kwargs)
++        self.ripple_effect = False
++        RIPPLE['list_off'] += 1
++
++    BaseListItem.__init__ = __init__
++    return 'BaseListItem.__init__'
++
++
++def install_ripple(cfg: dict) -> None:
++    todo = []
++    if cfg['ripple_fbo_fs'] == 'create':
++        todo.append(('ripple_fbo_fs=create', patch_ripple_fbo_fs))
++    elif cfg['ripple_fbo_fs']:
++        warn(f'ripple_fbo_fs={cfg["ripple_fbo_fs"]} unknown (use create), shipped kept')
++    if not cfg['ripple_stencil']:
++        todo.append(('ripple_stencil=off', patch_ripple_stencil))
++    if not cfg['list_ripple']:
++        todo.append(('list_ripple=off', patch_list_ripple))
++    for what, fn in todo:
++        try:
++            print(f'STUB bisect {what} patched={fn()}')
++        except Exception as e:  # noqa: BLE001
++            warn(f'{what} failed {e!r}')
++
++
 +GROUPS = {'input_fx': off_input_fx, 'menu': off_menu, 'bottom': off_bottom, 'topbar': off_topbar}
 +
 +
@@ -243,6 +361,10 @@ index 0000000..12dbfd4
 +            print(f'STUB bisect off={group} n={fn(app)}')
 +        except Exception as e:  # noqa: BLE001
 +            warn(f'off={group} failed {e!r}')
++    if cfg['ripple_fbo_fs'] == 'create':
++        print(f'STUB bisect ripple_fbo_fs=create n={RIPPLE["fbo_create"]}')  # ripple Fbos made so far
++    if not cfg['list_ripple']:
++        print(f'STUB bisect list_ripple=off n={RIPPLE["list_off"]}')  # items made so far (recycled ones follow)
 +    sm = getattr(app, 'sm', None)
 +    if cfg['transition'] and sm is not None:
 +        try:
@@ -265,6 +387,7 @@ index 0000000..12dbfd4
 +
 +def install() -> None:
 +    cfg = load_config()
++    install_ripple(cfg)  # at import, before ControlPApp().run() builds any widget
 +    try:
 +        from kivy.clock import Clock
 +        from controlp.app import ControlPApp
