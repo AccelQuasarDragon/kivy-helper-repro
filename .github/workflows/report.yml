@@ -3,6 +3,7 @@ name: report card
 # Publish ONE multi-run report from a JSON spec, without a local push, as three views of that spec
 # in shots/<slug>/ on branch `shots` (served by GitHub Pages; docs/cards.md):
 #   index.html (Discord card page), TESTS.md (every run in a table), sheet.png (ONE contact sheet of the runs).
+#   + embed.png (highlights sheet = og:image) when the spec has `embed`.
 # render (read-only: the runs' PNGs come from a sparse, credential-less checkout of `shots`) ->
 # publish (tools/push_shots.sh, the ONLY job here with contents: write).
 # workflow_dispatch ONLY (collaborators). Every input reaches the shell through env: variables only.
@@ -39,6 +40,7 @@ jobs:
       page: ${{ steps.r.outputs.page }}
       tests: ${{ steps.r.outputs.tests }}
       sheet: ${{ steps.r.outputs.sheet }}
+      embed: ${{ steps.r.outputs.embed }}
       # per attempt; publish reads this name (it may run in a later attempt than render)
       artifact: report-${{ github.run_number }}-a${{ github.run_attempt }}
     steps:
@@ -53,7 +55,7 @@ jobs:
           SLUG: ${{ inputs.slug }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          fail() { echo "::error::$1"; echo "**REPORT FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
           slug="${SLUG:-report-$RUN_ID}"
           # a leading letter: an all-digit slug could replace an inspect run's shots/<run_id>/
           [[ "$slug" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || fail 'slug: a letter, then up to 39 of a-z 0-9 -'
@@ -86,14 +88,16 @@ jobs:
           SLUG: ${{ steps.v.outputs.slug }}
           HAVE_SHOTS: ${{ steps.v.outputs.sparse != '' }}
         run: |
-          fail() { echo "::error::$1"; echo "**REPORT FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
           mkdir -p pub
-          shots=(); [ "$HAVE_SHOTS" != true ] || shots=(--shots-root shotsrc --sheet-manifest manifest.json)
+          shots=(); [ "$HAVE_SHOTS" != true ] || shots=(--shots-root shotsrc --sheet-manifest manifest.json --embed-manifest embed.json)
           # card_page.py escapes every text value (HTML / markdown) and allows only https URLs on its allowlist
           err=$(python3 tools/card_page.py pub/index.html --spec spec.json --repo "$GITHUB_REPOSITORY" \
                 --slug "$SLUG" --md pub/TESTS.md "${shots[@]}" 2>&1) ||
             fail "$(printf '%s' "$err" | tail -1 | cut -c1-300)"
           echo "$err"
+          # card_page warnings (e.g. og:description over 180 chars) -> summary lines, never a failure
+          printf '%s\n' "$err" | grep '^warning:' | tr -d '`' | sed 's/^/- **card warning:** /' >> "$GITHUB_STEP_SUMMARY" || true
           sheet=false
           if [ -f manifest.json ] && [ "$(python3 -c 'import json; print(len(json.load(open("manifest.json"))))')" != 0 ]; then
             # <= 8 MB (Discord + Pages friendly): tiles shrink until it fits (tools/contact_sheet.py)
@@ -101,12 +105,20 @@ jobs:
               fail 'contact sheet failed (see the step log)'
             sheet=true
           fi
+          embed=false
+          if [ -f embed.json ] && [ "$(python3 -c 'import json; print(len(json.load(open("embed.json"))))')" != 0 ]; then
+            # highlights (spec `embed`, <= 6): big tiles + big captions = og:image of the card
+            uv run --script tools/contact_sheet.py pub/embed.png --groups embed.json --height 900 --font-size 36 \
+              --cols 0 --max-bytes 8000000 || fail 'highlights sheet (embed.png) failed (see the step log)'
+            embed=true
+          fi
           owner="${GITHUB_REPOSITORY%%/*}"; name="${GITHUB_REPOSITORY#*/}"
           pages="https://${owner,,}.github.io/${name}/shots/$SLUG"
           {
             echo "page=$pages/"
             echo "tests=https://github.com/${GITHUB_REPOSITORY}/blob/shots/shots/$SLUG/TESTS.md"
             [ "$sheet" != true ] || echo "sheet=$pages/sheet.png"
+            [ "$embed" != true ] || echo "embed=$pages/embed.png"
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload the report
@@ -153,6 +165,7 @@ jobs:
           PAGE: ${{ needs.render.outputs.page }}
           TESTS: ${{ needs.render.outputs.tests }}
           SHEET: ${{ needs.render.outputs.sheet }}
+          EMBED: ${{ needs.render.outputs.embed }}
         run: |
           echo "report card page: $PAGE"; echo "TESTS.md: $TESTS"; echo "sheet: ${SHEET:-none}"
           {
@@ -161,6 +174,7 @@ jobs:
             echo
             echo "TESTS.md (every run in a table): $TESTS"
             [ -z "$SHEET" ] || { echo; echo "Contact sheet of all runs: $SHEET"; }
+            [ -z "$EMBED" ] || { echo; echo "Highlights sheet (the card's og:image): $EMBED"; }
             echo
             echo "(Pages deploys ~1+ minute after the push: open the URL in a browser first and post it only once it loads; posted too early, Discord caches an empty embed: post it again with \`?1\` appended. docs/cards.md)"
           } >> "$GITHUB_STEP_SUMMARY"

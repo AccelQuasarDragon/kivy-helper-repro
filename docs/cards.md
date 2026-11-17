@@ -92,3 +92,37 @@ same race-safe push as inspect's shots job). Its summary prints:
 Preview locally (a `shots` checkout in `shotsrc/`):
 `uv run --no-project tools/card_page.py index.html --spec report.json --repo OWNER/NAME --slug my-report --md TESTS.md --shots-root shotsrc --sheet-manifest m.json`
 then `uv run --script tools/contact_sheet.py sheet.png --groups m.json --max-bytes 8000000`.
+
+## Report readability (2026-11-16)
+The author's rules for every report, and how card_page.py follows them:
+1. A new idea goes on a new line.
+2. Technical info is a chain of plain, simple sentences.
+3. A report starts with a few bullets of the most important info.
+4. Every results table has a LEFTMOST column with the most important settings and how to recreate the run.
+
+Spec fields (all optional):
+- `key_points`: a list of strings (max 10, 400 chars each) = bullets right under the title, in TESTS.md and index.html.
+- run `settings`: short text, used only when the run has no inputs.json.
+- run `recreate`: an object of inspect inputs (`{"repo": "...", "extra": "..."}`), used only when the run has no inputs.json.
+- run `workflow`: `inspect.yml` (default) or `build.yml`: the form `recreate` fills (inputs.json names its own).
+- Form defaults (which fields a recreate section lists) are READ from that workflow file at render time, never a hand copy.
+- An inputs.json value over 2000 chars is cut and marked `…truncated` (not an error).
+- `embed`: a list (max 6) of `{"run": <id>, "image": "<png in shots/<id>/>", "caption": "<= 80 chars"}`.
+
+Settings / recreate column (leftmost column of the TESTS.md table): GENERATED, never hand-written.
+- inspect.yml's shots job writes `shots/<run_id>/inputs.json`: every dispatch input of that run (none is a secret).
+- card_page.py reads it from the `--shots-root` checkout (report.yml's sparse checkout includes it).
+- No inputs.json (runs before 2026-11-16): the run's spec `recreate`, else its `settings` text, else "not recorded".
+- The cell = source (`repo@ref`, first 7 chars of a commit sha), app, extra, api_level, patches, cache.
+- The cell links to `### Recreate run <id>` in the `## How to recreate` section at the bottom (same in index.html).
+- Each recreate section: where its settings came from, numbered steps (Actions tab -> inspect apk -> Run workflow
+  -> each field that differs from the form default, as copyable code), and the same inputs as one
+  `gh workflow run inspect.yml --json` command in a code block.
+
+Highlights sheet (`embed`): report.yml renders `embed.png` (one big tile per item, 900 px high, 36 px captions,
+`contact_sheet.py --groups --font-size 36`) and uses it as og:image, so the Discord embed shows the few screenshots
+that matter. The full `sheet.png` stays on the page and in TESTS.md.
+
+Warnings: an og:description over 180 chars prints `warning: ...` (card_page.py); report.yml copies it into its
+summary as a "card warning" line. It is not a failure (Discord just cuts the text).
+Generated run text on index.html is one line per idea (Question / Result / Evidence / Settings).

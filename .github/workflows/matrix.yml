@@ -44,7 +44,7 @@ jobs:
           # artifact_name is set below; label gets '<run label> <name>'). Unknown keys are refused.
           DEFAULTS = {'label': '', 'runner': 'ubuntu-latest', 'image': 'ghcr.io/kivy/buildozer:latest',
                       'repo': '', 'ref': 'HEAD', 'app': '', 'requirements': '', 'p4a_branch': '',
-                      'archs': '', 'add_archs': '', 'extra': '', 'app_config': '',
+                      'archs': '', 'add_archs': '', 'extra': '', 'app_config': '', 'patches': '',
                       'command': 'android debug', 'cache': 'off', 'apk_cache': False}
           raw = os.environ['BUILDS']
           if len(raw) > 20000:
@@ -90,9 +90,9 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
               f.write('builds=' + json.dumps(out, separators=(',', ':')) + '\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as f:
-              f.write(f'## matrix: {len(out)} builds\n\n| name | artifact | app | app_config | extra |\n|---|---|---|---|---|\n')
+              f.write(f'## matrix: {len(out)} builds\n\n| name | artifact | app | app_config | extra | patches |\n|---|---|---|---|---|---|\n')
               for el in out:
-                  cells = [el['name'], el['artifact_name'], el['repo'] or el['app'] or 'stub', el['app_config'], el['extra']]
+                  cells = [el['name'], el['artifact_name'], el['repo'] or el['app'] or 'stub', el['app_config'], el['extra'], el['patches']]
                   f.write('| ' + ' | '.join('`' + c.replace('|', '/').replace('`', "'") + '`' for c in cells) + ' |\n')
           PY
 
@@ -101,6 +101,8 @@ jobs:
     name: build ${{ matrix.b.name }}
     strategy:
       fail-fast: false
+      # cold builds in parallel hit gradle / maven HTTP 429 rate limits; build.yml also retries once on a 429
+      max-parallel: 4
       matrix:
         b: ${{ fromJSON(needs.check.outputs.builds) }}
     uses: ./.github/workflows/build.yml
@@ -117,6 +119,7 @@ jobs:
       add_archs: ${{ matrix.b.add_archs }}
       extra: ${{ matrix.b.extra }}
       app_config: ${{ matrix.b.app_config }}
+      patches: ${{ matrix.b.patches }}
       command: ${{ matrix.b.command }}
       cache: ${{ matrix.b.cache }}
       apk_cache: ${{ matrix.b.apk_cache }}

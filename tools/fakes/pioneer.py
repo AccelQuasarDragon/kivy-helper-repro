@@ -1,0 +1,302 @@
+"""Fake Pioneer network player (N-50A style) for driving yabb85/controlP without the hardware.
+Stdlib only, no third-party imports, no argparse at import time (it also runs INSIDE the app:
+patches/controlp/demo_device.diff carries a byte-identical copy as src/controlp/pioneer/_fake_pioneer.py).
+
+Two servers, both plain TCP on HOST (default 127.0.0.1):
+- HTTP on HTTP_PORT (18080): GET /description.xml = a UPnP device description that controlP's
+  pioneer/upnp.py ssdp_pioneer_device() accepts (manufacturer PIONEER CORPORATION, modelName N-50A,
+  X_ipRemoteTcpPort = TCP_PORT); GET /art/<name>.png = a small generated PNG (album art, list avatars).
+- TCP on TCP_PORT (8102): the Pioneer text protocol that controlP's pioneer/api.py speaks.
+  Each command ends with CR; each reply is one write of lines ending with CR LF.
+  The app reads ONE recv per command and BLOCKS when no reply comes, so every command it sends
+  with rep_flag=True gets a reply, and commands it sends with rep_flag=False get none
+  (a stray reply would be read as the answer to the NEXT command). PO / PF reply with the power
+  state: the app always drains the buffer right after them (_clean_buffer).
+  The connection is never closed by the fake (an EOF makes the app's _clean_buffer spin forever).
+
+Menu tree (fixed, generated): root "Music Server" -> 5 folders -> 6 tracks each -> play screen.
+?GAP = screen status, ?GIA = list lines with art URLs, ?GIC = art of the playing track,
+NNNNNGHP = open line N, 31PB = return, 10PB/11PB/20PB = play/pause/stop, 12PB/13PB = prev/next.
+
+Every request and reply is logged as one line `FAKEPIONEER <proto> <peer> <-|-> <text>` on stdout
+(flushed): on the runner it lands in sidecar.log, inside the app in logcat (tag python).
+
+Usage (runner sidecar, inspect.yml input `sidecar`): python3 -u tools/fakes/pioneer.py
+          [--host 127.0.0.1] [--tcp 8102] [--http 18080]
+In-app (demo_device.diff): from . import _fake_pioneer; _fake_pioneer.start()
+"""
+import binascii
+import socketserver
+import struct
+import sys
+import threading
+import time
+
+HOST, TCP_PORT, HTTP_PORT = '127.0.0.1', 8102, 18080
+FOLDERS = [f'Demo Album {c}' for c in 'ABCDE']
+TRACKS = 6
+VISIBLE = 8  # lines the real player shows per screen
+DURATION_S = 210
+BUF_MAX = 64 * 1024  # a connection that sends this much without a CR is dropped (no unbounded buffer)
+_lock = threading.RLock()
+_started = {}
+
+
+def log(proto: str, peer, arrow: str, text: str) -> None:
+    peer = f'{peer[0]}:{peer[1]}' if isinstance(peer, tuple) else str(peer)
+    with _lock:
+        print(f'FAKEPIONEER {time.strftime("%H:%M:%S")} {proto} {peer} {arrow} {text}', flush=True)
+
+
+# ---------------------------------------------------------------- PNG (no zlib module needed)
+def _zlib_stored(data: bytes) -> bytes:
+    """A valid zlib stream with stored (uncompressed) deflate blocks."""
+    out, a, b = bytearray(b'\x78\x01'), 1, 0
+    for byte in data:
+        a = (a + byte) % 65521
+        b = (b + a) % 65521
+    for i in range(0, max(len(data), 1), 65535):
+        chunk = data[i:i + 65535]
+        final = 1 if i + 65535 >= len(data) else 0
+        out += struct.pack('<BHH', final, len(chunk), len(chunk) ^ 0xFFFF) + chunk
+    return bytes(out + struct.pack('>I', (b << 16) | a))
+
+
+def png(name: str, size: int = 96) -> bytes:
+    """A size x size RGB gradient whose colour follows the name (stable per name)."""
+    seed = binascii.crc32(name.encode())
+    r0, g0, b0 = seed & 255, (seed >> 8) & 255, (seed >> 16) & 255
+    rows = bytearray()
+    for y in range(size):
+        rows.append(0)  # filter: none
+        for x in range(size):
+            rows += bytes(((r0 + x) & 255, (g0 + y) & 255, (b0 + x + y) & 255))
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack('>I', len(body)) + kind + body + struct.pack('>I', binascii.crc32(kind + body))
+    return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+            + chunk(b'IDAT', _zlib_stored(bytes(rows))) + chunk(b'IEND', b''))
+
+
+# ---------------------------------------------------------------- the player's state
+class Player:
+    """One shared player (all connections see the same state, like the real device)."""
+
+    def __init__(self, http_port: int):
+        self.http_port = http_port
+        self.power = 'PWR0'
+        self.input = 38  # starts on internet radio; the app's Music Server tap sends 44FN
+        self.path = []  # [] = root list, [f] = folder f's track list, [f, t] = playing track t
+        self.play = 0  # 0 stopped, 1 pause, 2 play
+        self.started = 0.0
+        self.shuffle = 0
+        self.repeat = 0
+
+    def art(self, name: str) -> str:
+        return f'http://127.0.0.1:{self.http_port}/art/{name.replace(" ", "_")}.png'
+
+    def items(self):
+        """(title, [(text, art name)]) of the list on screen, or None on the play screen."""
+        if not self.path:
+            return 'Music Server', [(f, f) for f in FOLDERS]
+        if len(self.path) == 1:
+            f = FOLDERS[self.path[0]]
+            return f, [(f'Track {t + 1}', f'{f} {t + 1}') for t in range(TRACKS)]
+        return None
+
+    def elapsed(self) -> int:
+        return int(time.time() - self.started) % DURATION_S if self.play == 2 else 0
+
+    def screen(self) -> list:
+        lst = self.items()
+        if lst is not None:
+            title, items = lst
+            top = '0' if not self.path else '1'
+            n = min(VISIBLE, len(items))
+            out = [f'GBP{n:02d}',
+                   f'GCP010{top}0{top}00000000000"{title}"',  # type view top u1 return u2 shuf rep u3 u4 vue play u5
+                   f'GDP{1:05d}{n:05d}{len(items):05d}']
+            out += [f'GEP{k + 1:02d}{1 if k == 0 else 0}01"{items[k][0]}"' for k in range(n)]
+            return out
+        f, t = self.path
+        s = self.elapsed()
+        meta = [f'Track {t + 1}', 'Fake Artist', FOLDERS[f], 'FLAC', '44.1kHz', '16bit',
+                f'{s // 60}:{s % 60:02d}', f'{DURATION_S // 60}:{DURATION_S % 60:02d}']
+        return ([f'GBP{len(meta):02d}',
+                 f'GCP0211010{self.shuffle}{self.repeat}00110{self.play}00"{FOLDERS[f]}"',
+                 f'GDP{1:05d}{len(meta):05d}{len(meta):05d}']
+                + [f'GEP{k + 1:02d}0{k + 20:02d}"{v}"' for k, v in enumerate(meta)])
+
+    def lines(self, begin: int, end: int) -> list:
+        lst = self.items()
+        items = lst[1] if lst else []
+        out = []
+        for k, line in enumerate(range(begin, end + 1), 1):
+            text, art = items[line - 1] if 0 < line <= len(items) else ('(empty)', 'empty')
+            url = self.art(art)
+            out.append(f'GIB{k:05d}{line:05d}010{len(text):02d}"{text}"{len(url):03d}"{url}"')
+        return out
+
+    def command(self, cmd: str):
+        """One command (CR stripped) -> reply lines, or None = send nothing."""
+        if cmd == '?P':
+            return [self.power]
+        if cmd in ('PO', 'PF'):
+            self.power = 'PWR0' if cmd == 'PO' else 'PWR2'
+            return [self.power]
+        if cmd == '?V':
+            return ['VOL040']
+        if cmd == '?F':
+            return [f'FN{self.input:02d}']
+        if len(cmd) == 4 and cmd.endswith('FN') and cmd[:2].isdigit():
+            self.input, self.path = int(cmd[:2]), []
+            return [f'FN{self.input:02d}']
+        if cmd == '?GAP':
+            return self.screen()
+        if cmd == '?GIC':
+            if len(self.path) == 2:
+                url = self.art(f'{FOLDERS[self.path[0]]} {self.path[1] + 1}')
+                return [f'GIC{len(url):03d}"{url}"']
+            return ['GIC000""']
+        if cmd.startswith('?GIA') and len(cmd) == 14 and cmd[4:].isdigit():
+            begin, end = int(cmd[4:9]), int(cmd[9:14])
+            return self.lines(begin, max(begin, min(end, begin + 99)))
+        if len(cmd) == 8 and cmd.endswith('GHP') and cmd[:5].isdigit():
+            n, lst = int(cmd[:5]), self.items()
+            if lst is not None and 0 < n <= len(lst[1]):
+                self.path.append(n - 1)
+                if len(self.path) == 2:
+                    self.play, self.started = 2, time.time()
+            return ['R']
+        if len(cmd) == 8 and cmd.endswith('GGP') and cmd[:5].isdigit():
+            return None  # select_line: rep_flag=False
+        if cmd.endswith('ROI'):
+            return None  # amplifier / CD commands: rep_flag=False (or never read)
+        if cmd == '18PB':
+            return None  # current_play: rep_flag=False
+        if len(cmd) == 4 and cmd.endswith('PB') and cmd[:2].isdigit():
+            code = cmd[:2]
+            if code == '31' and self.path:
+                self.path.pop()
+                self.play = 0 if len(self.path) < 2 else self.play
+            elif code == '10' and len(self.path) == 2:
+                self.play, self.started = 2, (self.started if self.play == 1 else time.time())
+            elif code == '11' and self.play == 2:
+                self.play = 1
+            elif code == '20':
+                self.play = 0
+            elif code in ('12', '13') and len(self.path) == 2:
+                self.path[1] = (self.path[1] + (1 if code == '13' else -1)) % TRACKS
+                self.started = time.time()
+            elif code == '34':
+                self.repeat = (self.repeat + 1) % 3
+            elif code == '35':
+                self.shuffle ^= 1
+            return ['R']
+        return ['E04']  # the player's "unknown command" error
+
+
+# ---------------------------------------------------------------- servers
+class _TCP(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+class PioneerHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        peer, buf = self.client_address, b''
+        log('tcp', peer, '--', 'connected')
+        while True:
+            data = self.request.recv(4096)
+            if not data:
+                log('tcp', peer, '--', 'closed by the app')
+                return
+            buf += data
+            if len(buf) > BUF_MAX and b'\r' not in buf:
+                log('tcp', peer, '--', f'dropped: {len(buf)} bytes without CR (max {BUF_MAX})')
+                return
+            while b'\r' in buf:
+                raw, buf = buf.split(b'\r', 1)
+                cmd = raw.decode('utf-8', 'replace').strip()
+                if not cmd:
+                    continue
+                with _lock:
+                    reply = self.server.player.command(cmd)
+                log('tcp', peer, '<-', cmd)
+                if reply is None:
+                    log('tcp', peer, '->', '(no reply: the app does not read one)')
+                    continue
+                self.request.sendall(''.join(line + '\r\n' for line in reply).encode('utf-8'))
+                for line in reply:
+                    log('tcp', peer, '->', line)
+
+
+class HttpHandler(socketserver.StreamRequestHandler):
+    """GET only, one request per connection (Connection: close). No http.server import."""
+
+    def handle(self):
+        peer = self.client_address
+        first = self.rfile.readline(4096).decode('latin-1').strip()
+        for _ in range(100):  # headers: ignored, at most 100 lines of 4 KB
+            if not self.rfile.readline(4096).strip():
+                break
+        parts = first.split()
+        path = parts[1] if len(parts) >= 2 else ''
+        log('http', peer, '<-', first[:200])
+        if path == '/description.xml':
+            status, ctype, body = '200 OK', 'text/xml; charset="utf-8"', description(self.server.tcp_port).encode()
+        elif path.startswith('/art/') and path.endswith('.png'):
+            status, ctype, body = '200 OK', 'image/png', png(path[5:-4])
+        else:
+            status, ctype, body = '404 Not Found', 'text/plain', b'not found\n'
+        head = (f'HTTP/1.0 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {len(body)}\r\n'
+                'Connection: close\r\n\r\n').encode()
+        self.wfile.write(head + (body if parts[:1] != ['HEAD'] else b''))
+        log('http', peer, '->', f'{status} {ctype} {len(body)} bytes')
+
+
+def description(tcp_port: int) -> str:
+    return ('<?xml version="1.0"?>\n'
+            '<root xmlns="urn:schemas-upnp-org:device-1-0" xmlns:pioneer="urn:pioneer-co-jp:device-1-0">\n'
+            '<specVersion><major>1</major><minor>0</minor></specVersion>\n<device>\n'
+            '<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>\n'
+            '<friendlyName>Fake N-50A</friendlyName>\n<manufacturer>PIONEER CORPORATION</manufacturer>\n'
+            '<modelName>N-50A</modelName>\n<pioneer:X_ipRemoteReady>1</pioneer:X_ipRemoteReady>\n'
+            f'<pioneer:X_ipRemoteTcpPort>{tcp_port}</pioneer:X_ipRemoteTcpPort>\n</device>\n</root>\n')
+
+
+def start(host: str = HOST, tcp_port: int = TCP_PORT, http_port: int = HTTP_PORT):
+    """Bind both servers NOW (ready when this returns) and serve them in daemon threads.
+    Idempotent per (host, ports). Returns (tcp_server, http_server)."""
+    key = (host, tcp_port, http_port)
+    with _lock:
+        if key in _started:
+            return _started[key]
+        tcp = _TCP((host, tcp_port), PioneerHandler)
+        tcp.player = Player(http_port)
+        http = _TCP((host, http_port), HttpHandler)
+        http.tcp_port = tcp_port
+        for srv in (tcp, http):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+        _started[key] = (tcp, http)
+    log('main', host, '--', f'listening: tcp {tcp_port} (Pioneer protocol), http {http_port} (description + art)')
+    return tcp, http
+
+
+def main(argv=None) -> int:
+    import argparse  # here, not at import: the in-app copy never needs it
+    ap = argparse.ArgumentParser(description='Fake Pioneer network player (tools/fakes/pioneer.py)')
+    ap.add_argument('--host', default=HOST)
+    ap.add_argument('--tcp', type=int, default=TCP_PORT)
+    ap.add_argument('--http', type=int, default=HTTP_PORT)
+    a = ap.parse_args(argv)
+    start(a.host, a.tcp, a.http)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

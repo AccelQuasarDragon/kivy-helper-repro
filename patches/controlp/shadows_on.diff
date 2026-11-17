@@ -1,0 +1,21 @@
+# shadows_on.diff: run their real app WITH KivyMD shadows.
+# Upstream: yabb85/controlP commit cad5d5c626516dcbf18719194c92e63f06128d62 (branch dev). App dir src/.
+# Used by build.yml input `patches` (git apply --verbose in the fetched repo root, before the spec).
+# git apply ignores this text before the first "diff --git" line.
+# What it does:
+# - src/main.py calls disable_shadows() (a Factory swap of BoxShadow for a no-op group).
+# - This patch comments that call out.
+# - So every elevated widget gets its BoxShadow and its Fbo again: the Fbo path of the GPU crash report.
+# Combine freely with insets_fix.diff and fake_pioneer.diff / demo_device.diff (other files).
+
+diff --git a/src/main.py b/src/main.py
+index 857d19d..c4a55e4 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -33,5 +33,5 @@ def disable_shadows() -> None:
+ 
+ 
+ if __name__ == '__main__':
+-    disable_shadows()
++    # disable_shadows()  # shadows ON: KivyMD BoxShadow (one Fbo per elevated widget), as KivyMD ships it
+     ControlPApp().run()
