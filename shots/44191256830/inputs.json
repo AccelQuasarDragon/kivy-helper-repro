@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44191256830",
+ "inputs": {
+  "label": "controlP bisect gate T2 ripple_stencil=false from matrix run 44185768900",
+  "apk_url": "",
+  "artifact_run": "44185768900",
+  "artifact_name": "build-5-T2-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "35",
+  "profile": "pixel_6",
+  "taps": "540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
