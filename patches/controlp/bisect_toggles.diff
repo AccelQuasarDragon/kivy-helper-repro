@@ -1,0 +1,294 @@
+# bisect_toggles.diff: switch groups of their real UI OFF from app_config.json (controlP top-down bisect).
+# Upstream: yabb85/controlP commit cad5d5c626516dcbf18719194c92e63f06128d62 (branch dev). App dir src/.
+# Used by build.yml input `patches` (git apply --verbose in the fetched repo root, before the spec).
+# git apply ignores this text before the first "diff --git" line.
+# Apply AFTER demo_device.diff + shadows_on.diff (generated against that tree); also combines with insets_fix.diff.
+# What it does:
+# - Adds src/controlp/_bisect.py and ONE import line near the top of src/main.py.
+# - _bisect.py reads app_config.json next to main.py (build.yml input `app_config`), wraps ControlPApp.on_start,
+#   and 0.5 s after start turns OFF the groups set false: input_fx, menu, bottom, topbar; `transition` = a name.
+# - Defaults = the app as shipped. Missing attributes print `STUB bisect warn` and the app goes on.
+# - Logs (logcat tag python): STUB bisect cfg / off=<group> n= / transition / current=<screen> t= / STUB count.
+# Matrix JSON: tools/controlp_bisect.py; docs/bisect.md "controlP top-down bisect".
+
+diff --git a/src/controlp/_bisect.py b/src/controlp/_bisect.py
+new file mode 100644
+index 0000000..12dbfd4
+--- /dev/null
++++ b/src/controlp/_bisect.py
+@@ -0,0 +1,263 @@
++"""controlP top-down bisect toggles (added by kivy-helper-repro patches/controlp/bisect_toggles.diff).
++
++Imported once from main.py. Reads app_config.json next to main.py (build.yml `app_config` input) and,
++after the app is built, switches groups of their real UI OFF so a phone crash can be bisected:
++  input_fx   false = InputItems lose the ripple, the input list gets a plain scroll effect (no
++                     overscroll stretch) and stops observing the input model (no relabel on choose)
++  menu       false = explore's MenuView (MDRecycleView) -> an empty Widget, removed from its model
++  bottom     false = every BottomView -> an empty dp(50) spacer (same layout, taps unchanged)
++  topbar     false = every TopView loses its title + trailing power button; the MDTopAppBar shell stays
++  transition ''    = keep KivyMD's (MDSharedAxis); else a Kivy screenmanager or KivyMD transition
++                     name without 'Transition' (No, Fade, MDSlide, ...), applied 0.5 s after start
++Defaults = the app as shipped. Unknown keys are printed and ignored. Never raises: a missing attribute
++prints `STUB bisect warn ...` and the app goes on. Logcat tag python, lines start with `STUB `.
++"""
++import json
++import time
++from pathlib import Path
++
++DEFAULTS = {'input_fx': True, 'menu': True, 'bottom': True, 'topbar': True, 'transition': ''}
++FALSE = {'0', 'false', 'off', 'no', ''}
++DELAY = 0.5  # s after on_start: after MDScreenManager.check_transition and the appbars' own Clock adds
++
++
++def warn(msg: str) -> None:
++    print('STUB bisect warn', msg)
++
++
++def load_config() -> dict:
++    cfg = dict(DEFAULTS)
++    path = Path(__file__).resolve().parents[1] / 'app_config.json'
++    try:
++        raw = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
++    except Exception as e:  # noqa: BLE001 - never crash the app
++        warn(f'app_config.json unreadable {e!r}')
++        raw = {}
++    if not isinstance(raw, dict):
++        warn('app_config.json is not an object')
++        raw = {}
++    for key, value in raw.items():
++        if key not in DEFAULTS:
++            warn(f'unknown key={key} ignored')
++        elif isinstance(DEFAULTS[key], bool):
++            cfg[key] = value if isinstance(value, bool) else str(value).lower() not in FALSE
++        else:
++            cfg[key] = str(value)
++    print('STUB bisect cfg', json.dumps(cfg, sort_keys=True), 'file=' + str(path.exists()).lower())
++    return cfg
++
++
++def class_names(obj) -> set:
++    return {c.__name__ for c in type(obj).__mro__}
++
++
++def find(root, name: str) -> list:
++    """Widgets under root (included) whose class or a base class is called `name`."""
++    try:
++        return [w for w in root.walk(restrict=True) if name in class_names(w)]
++    except Exception as e:  # noqa: BLE001
++        warn(f'walk for {name} failed {e!r}')
++        return []
++
++
++def screens(app) -> list:
++    sm = getattr(app, 'sm', None)
++    if sm is None:
++        warn('app.sm missing')
++        return []
++    return list(getattr(sm, 'screens', []))
++
++
++def drop_observer(model, view, what: str) -> None:
++    try:
++        if model is not None and view in getattr(model, 'observers', []):
++            model.remove_observer(view)
++    except Exception as e:  # noqa: BLE001
++        warn(f'{what} remove_observer failed {e!r}')
++
++
++def replace(widget, new) -> bool:
++    parent = widget.parent
++    if parent is None:
++        warn(f'{type(widget).__name__} has no parent')
++        return False
++    index = parent.children.index(widget)
++    parent.remove_widget(widget)
++    parent.add_widget(new, index=index)
++    return True
++
++
++def off_input_fx(app) -> int:
++    from kivy.effects.scroll import ScrollEffect
++
++    class PlainScroll(ScrollEffect):
++        """Kivy's ScrollEffect plus the no-op hooks KivyMD's StretchOverScrollBehavior calls on touch."""
++        scale_axis = 'y'
++        last_touch_pos = (0, 0)
++
++        def convert_overscroll(self, touch):
++            pass
++
++        def reset_scale(self, *args):
++            pass
++
++    n = 0
++    for view in find(getattr(app, 'input_view', None) or app.root, 'InputListView'):
++        for item in getattr(view, 'items', []):
++            if hasattr(item, 'ripple_effect'):
++                item.ripple_effect = False
++                n += 1
++            else:
++                warn('InputItem has no ripple_effect')
++        try:
++            view.effect_cls = PlainScroll
++            view._update_effect_bounds()  # Kivy's on_effect_cls keeps min=max=0 otherwise
++            print('STUB bisect input_fx effect_y=' + type(getattr(view, 'effect_y', None)).__name__)
++        except Exception as e:  # noqa: BLE001
++            warn(f'input list effect_cls failed {e!r}')
++        drop_observer(getattr(view, 'model', None), view, 'input list')
++    return n
++
++
++def off_menu(app) -> int:
++    from kivy.uix.widget import Widget
++    n = 0
++    for view in find(getattr(app, 'explore_view', None) or app.root, 'MenuView'):
++        drop_observer(getattr(view, 'model', None), view, 'menu')
++        n += replace(view, Widget())
++    return n
++
++
++def off_bottom(app) -> int:
++    from kivy.metrics import dp
++    from kivy.uix.widget import Widget
++    n = 0
++    for screen in screens(app):
++        for view in find(screen, 'BottomView'):
++            drop_observer(getattr(view, 'amplifier_model', None), view, 'bottom amplifier')
++            drop_observer(getattr(view, 'bottom_model', None), view, 'bottom')
++            n += replace(view, Widget(size_hint=(1, None), height=dp(50)))
++    return n
++
++
++def off_topbar(app) -> int:
++    n = 0
++    for screen in screens(app):
++        for bar in find(screen, 'TopView'):
++            for attr in ('_appbar_title', '_trailing_button_container'):
++                part = getattr(bar, attr, None)
++                if part is None:
++                    warn(f'TopView.{attr} missing')
++                elif part.parent is None:
++                    warn(f'TopView.{attr} not added yet')
++                else:
++                    part.parent.remove_widget(part)
++                    n += 1
++    return n
++
++
++def make_transition(name: str):
++    from kivy.uix import screenmanager
++    from kivymd.uix import transition as md_transition
++    for module in (screenmanager, md_transition):
++        cls = getattr(module, f'{name}Transition', None)
++        if cls is not None:
++            return cls()
++    raise ValueError(f'unknown transition {name!r}')
++
++
++def walk_instructions(group):
++    for child in getattr(group, 'children', None) or []:
++        yield child
++        yield from walk_instructions(child)
++
++
++def count_line(screen_name: str, widget) -> str:
++    """Copy of stub_kivymd/stubkit.py count_tree (kivy-helper-repro), without the transition Fbo counter."""
++    import sys
++    from kivy.graphics import Fbo
++    from kivy.graphics.boxshadow import BoxShadow
++    elev = sys.modules.get('kivymd.uix.behaviors.elevation')
++    elev_cls = getattr(elev, 'CommonElevationBehavior', None)
++    n = {'boxshadow': 0, 'fbo_boxshadow': 0, 'elevated': 0, 'fbo': 0}
++    seen = set()  # a child widget's canvas is also nested inside its parent's canvas
++    for w in widget.walk(restrict=True):
++        if elev_cls is not None and isinstance(w, elev_cls):
++            n['elevated'] += 1
++        canvas = w.canvas
++        for group in (canvas.before, canvas, canvas.after):
++            for ins in walk_instructions(group):
++                if id(ins) in seen:
++                    continue
++                seen.add(id(ins))
++                if isinstance(ins, Fbo):
++                    n['fbo'] += 1
++                if isinstance(ins, BoxShadow):
++                    n['boxshadow'] += 1
++                    n['fbo_boxshadow'] += sum(isinstance(c, Fbo) for c in ins.children)
++    return (f'STUB count screen={screen_name} boxshadow={n["boxshadow"]} '
++            f'fbo_boxshadow={n["fbo_boxshadow"]} elevated={n["elevated"]} fbo={n["fbo"]}')
++
++
++def count(screen) -> None:
++    try:
++        print(count_line(getattr(screen, 'name', '?'), screen))
++    except Exception as e:  # noqa: BLE001
++        warn(f'count failed {e!r}')
++
++
++GROUPS = {'input_fx': off_input_fx, 'menu': off_menu, 'bottom': off_bottom, 'topbar': off_topbar}
++
++
++def setup(app, cfg: dict, dt=None) -> None:
++    try:
++        _setup(app, cfg)
++    except Exception as e:  # noqa: BLE001 - never crash the app
++        warn(f'setup failed {e!r}')
++
++
++def _setup(app, cfg: dict) -> None:
++    for group, fn in GROUPS.items():
++        if cfg[group]:
++            continue
++        try:
++            print(f'STUB bisect off={group} n={fn(app)}')
++        except Exception as e:  # noqa: BLE001
++            warn(f'off={group} failed {e!r}')
++    sm = getattr(app, 'sm', None)
++    if cfg['transition'] and sm is not None:
++        try:
++            sm.transition = make_transition(cfg['transition'])
++        except Exception as e:  # noqa: BLE001
++            warn(f'transition {cfg["transition"]} failed {e!r}')
++    print('STUB bisect transition', type(getattr(sm, 'transition', None)).__name__)
++    if sm is not None:
++        def on_current(manager, name):
++            print(f'STUB bisect current={name} t={time.monotonic():.3f}')
++            try:
++                count(manager.get_screen(name))  # before the first frame of the switch
++            except Exception as e:  # noqa: BLE001
++                warn(f'get_screen {name} failed {e!r}')
++        sm.bind(current=on_current)
++        print(f'STUB bisect current={sm.current} t={time.monotonic():.3f}')
++    for screen in screens(app):
++        count(screen)
++
++
++def install() -> None:
++    cfg = load_config()
++    try:
++        from kivy.clock import Clock
++        from controlp.app import ControlPApp
++        shipped = ControlPApp.on_start
++
++        def on_start(self):
++            shipped(self)
++            Clock.schedule_once(lambda dt: setup(self, cfg, dt), DELAY)
++
++        ControlPApp.on_start = on_start
++    except Exception as e:  # noqa: BLE001
++        warn(f'install failed {e!r}')
++
++
++install()
+diff --git a/src/main.py b/src/main.py
+index c4a55e4..2e55dc9 100644
+--- a/src/main.py
++++ b/src/main.py
+@@ -5,6 +5,7 @@ File created specificly to android version
+ from kivy.factory import Factory
+ from kivy.graphics import InstructionGroup
+ from controlp.app import ControlPApp
++import controlp._bisect  # noqa: F401 - bisect toggles from app_config.json (kivy-helper-repro patch)
+ 
+ 
+ class NoShadow(InstructionGroup):

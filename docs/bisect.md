@@ -139,3 +139,49 @@ Android version first.
   uniforms) is read from Kivy's source, not measured (no per-frame render counter).
 - The hypothesis itself (arriving screen's Fbo create + first render) comes from one crash log; the
   ladder tests it, it does not assume it is right.
+
+# controlP top-down bisect (their real app, one group off at a time)
+
+Code: `patches/controlp/bisect_toggles.diff` (adds `src/controlp/_bisect.py` + one import in `src/main.py`),
+`tools/controlp_bisect.py` (the rule + JSON), `tests/test_controlp_bisect.py`.
+Why: their app crashes on a Pixel 5 (Adreno 620, Android 11) about 60 ms into input -> explore (device lab DL1).
+The kit above did not crash, so this goes top-down: their full app, with groups of its UI switched off.
+
+## The rule
+A variant = the SET of groups switched off. Every build: their pinned commit + `demo_device.diff;shadows_on.diff;bisect_toggles.diff`
+(in that order; the TopView BoxShadows stay ON in every variant, shadows are tested last), `android.api=34`, fat APK (x86_64 added), cache off.
+Groups (`app_config` keys; default = as shipped):
+- `input_fx: false` = input list rows lose the ripple, the list gets a plain scroll effect (no overscroll stretch), the list stops relabelling on choose.
+- `menu: false` = explore's MenuView (MDRecycleView) becomes an empty widget.
+- `bottom: false` = every BottomView becomes an empty spacer of the same height (taps unchanged).
+- `topbar: false` = every TopView loses its title + power button; the app bar itself (and its BoxShadow) stays.
+- `transition: "No"` = NoTransition instead of KivyMD's MDSharedAxis (empty = keep).
+All of it is applied 0.5 s after start, after the widgets are built (so they are still constructed once).
+
+| variant | off | if it crashes / stays clean |
+|---|---|---|
+| B0 | nothing (control) | reserve |
+| B1 | input_fx, menu | crash = not these two: run B2 / clean = run B3 |
+| B2 | input_fx, menu, bottom, topbar | crash = transition, the rest, or the shadow alone / clean = bottom or topbar |
+| B3 | input_fx | crash = menu / clean = input_fx |
+| B4 | menu | splits B1 the other way |
+| B5 | B2 + transition | the smallest app still holding the BoxShadows |
+
+One clean run proves little (repeat any single clean). The last step is the smallest crashing set WITHOUT `shadows_on.diff`.
+
+## Run it
+1. Matrix: `uv run --no-project tools/controlp_bisect.py --only B1` -> paste as `builds` in Actions -> "build matrix" (label e.g. `controlP bisect B1`).
+2. Gate + phone: `uv run --no-project tools/controlp_bisect.py <matrix run ID> <matrix run number> --only B1 [--attempt N]`
+   prints per variant one inspect.yml JSON (emulator gate) and one devicelab.yml JSON (Pixel 5 `redfin`, API 30).
+   Taps: `540,2000,5` first (a blank spot on Home; meant to dismiss an open notification shade, UNVERIFIED: check the video), then DL1's taps.
+3. Gate PASS: logcat has `STUB bisect cfg` and one `STUB bisect off=<group> n=` per off group (n > 0; B5's transition logs `STUB bisect transition NoTransition` instead), `FAKEPIONEER <- 44FN`,
+   `STUB bisect current=explore`, no traceback, and the last screenshot shows explore. Then the devicelab run.
+
+## Log lines (logcat tag python)
+`STUB bisect cfg {...} file=true|false`, `STUB bisect off=<group> n=<items changed>`, `STUB bisect transition <class>`,
+`STUB bisect current=<screen> t=<monotonic s>` (each switch, at the moment `current` is set), then `STUB count screen=<s> boxshadow= fbo_boxshadow= elevated= fbo=`
+for the arriving screen (and for every screen once at setup). `STUB bisect warn ...` = an attribute was missing; the app went on.
+
+## Untested
+Nothing has run on GitHub or Android yet. `_bisect.py` is only compiled locally (no Kivy run): the attribute names come from
+their source at the pinned commit and KivyMD master a00c10c, which the build fetches unpinned (check it is unchanged).
