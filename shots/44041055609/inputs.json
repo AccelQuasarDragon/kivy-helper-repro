@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44041055609",
+ "inputs": {
+  "label": "controlP cad5d5c R4: insets fix api36 on Android 15 (cold)",
+  "apk_url": "",
+  "artifact_run": "",
+  "artifact_name": "",
+  "repo": "yabb85/controlP",
+  "ref": "cad5d5c626516dcbf18719194c92e63f06128d62",
+  "app": "src",
+  "archs": "",
+  "extra": "android.api=36",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "35",
+  "profile": "pixel_6",
+  "taps": "",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "patches/controlp/insets_fix.diff",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
