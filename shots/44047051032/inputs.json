@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44047051032",
+ "inputs": {
+  "label": "controlP cad5d5c R4c: R4b APK (insets fix) on Android 16, profile pixel (no cutout): overlap? (re-inspect, no build)",
+  "apk_url": "",
+  "artifact_run": "44041086179",
+  "artifact_name": "build-41",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "36",
+  "profile": "pixel",
+  "taps": "",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
