@@ -9,6 +9,7 @@
           manifest = [{"label": "run label", "images": ["path.png", ...]}, ...] (card_page.py --sheet-manifest
           writes it for report.yml): tiles flow across rows, each with a colour band per group and two lines
           (group label, file stem); --cols 0 = pick the column count for a roughly 16:9 sheet.
+--font-size N: caption font px (default 20; 36 for the report highlights sheet embed.png).
 --max-bytes > 0: if the PNG is bigger, re-render with tiles 20 % smaller (down to 160 px) until it fits,
 else exit 1. Locally / in CI: uv run --script tools/contact_sheet.py ...
 """
@@ -24,7 +25,8 @@ from PIL import Image, ImageDraw, ImageFont
 BG, FG = (32, 32, 32), (235, 235, 235)
 BANDS = [(66, 153, 225), (237, 137, 54), (72, 187, 120), (229, 62, 62), (159, 122, 234),
          (236, 201, 75), (56, 178, 172), (237, 100, 166)]
-GAP, LINE_H, BAND_H, MIN_H = 8, 26, 6, 160
+GAP, BAND_H, MIN_H = 8, 6, 160
+FONT = 20  # caption font px (--font-size); a caption line is FONT + 6 px high
 
 
 def stem(path: str) -> str:
@@ -40,9 +42,10 @@ def fit(draw, text: str, font, width: int) -> str:
     return text + '…'
 
 
-def compose(tiles, height: int, cols: int) -> Image.Image:
+def compose(tiles, height: int, cols: int, font_size: int = FONT) -> Image.Image:
     """tiles = [(lines, band_colour_or_None, PIL image)] -> sheet image."""
-    font = ImageFont.load_default(size=20)
+    font = ImageFont.load_default(size=font_size)
+    line_h = font_size + 6
     scaled = []
     for lines, band, im in tiles:
         w = max(1, round(im.width * height / im.height))
@@ -51,11 +54,11 @@ def compose(tiles, height: int, cols: int) -> Image.Image:
     bands = any(t[1] for t in scaled)
     if cols <= 0:  # auto: about 16:9 overall
         avg_w = sum(t[2].width for t in scaled) / len(scaled)
-        cell_h = height + nlines * LINE_H + (BAND_H if bands else 0)
+        cell_h = height + nlines * line_h + (BAND_H if bands else 0)
         cols = max(1, round(math.sqrt(len(scaled) * 16 * cell_h / (9 * (avg_w + GAP)))))
     cols = min(cols, len(scaled))
     rows = [scaled[i:i + cols] for i in range(0, len(scaled), cols)]
-    cell_h = (BAND_H if bands else 0) + height + nlines * LINE_H + GAP
+    cell_h = (BAND_H if bands else 0) + height + nlines * line_h + GAP
     width = max(sum(t[2].width for t in row) + GAP * (len(row) + 1) for row in rows)
     sheet = Image.new('RGB', (width, len(rows) * cell_h + GAP), BG)
     draw = ImageDraw.Draw(sheet)
@@ -70,7 +73,7 @@ def compose(tiles, height: int, cols: int) -> Image.Image:
                 ty += BAND_H
             sheet.paste(tile, (x, ty))
             for k, line in enumerate(lines):
-                draw.text((x + 4, ty + height + 3 + k * LINE_H), fit(draw, line, font, tile.width - 8),
+                draw.text((x + 4, ty + height + 3 + k * line_h), fit(draw, line, font, tile.width - 8),
                           fill=band if (band and k == 0 and len(lines) > 1) else FG, font=font)
             x += tile.width + GAP
         y += cell_h
@@ -98,6 +101,7 @@ def main() -> int:
     ap.add_argument('--height', type=int, help='tile height in px (default 720 plain, 480 groups)')
     ap.add_argument('--cols', type=int, help='tiles per row (default 4 plain, 0 = auto for groups)')
     ap.add_argument('--max-bytes', type=int, default=0, help='shrink tiles until the PNG fits (0 = no cap)')
+    ap.add_argument('--font-size', type=int, default=FONT, help='caption font px (bigger for a highlights sheet, e.g. 36)')
     a = ap.parse_args()
     if a.groups:
         if a.images:
@@ -114,7 +118,7 @@ def main() -> int:
         return 1
     tiles = [(lines, band, Image.open(p).convert('RGB')) for lines, band, p in tiles]
     while True:
-        sheet = compose(tiles, height, cols)
+        sheet = compose(tiles, height, cols, a.font_size)
         buf = io.BytesIO()
         sheet.save(buf, 'PNG', optimize=True)
         if not a.max_bytes or buf.tell() <= a.max_bytes:

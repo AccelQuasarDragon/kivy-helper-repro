@@ -19,6 +19,10 @@ One reusable workflow, not one repo per question.
   facts + optional x86_64 emulator run (taps, screenshots, our runner's logcat); builds via build.yml
   (`workflow_call`); screenshots go to the orphan branch `shots`. Helpers: `tools/apk_pkgs.py`,
   `tools/emu_run.sh`, `tools/contact_sheet.py`. Test app: `stub_kivymd/` (+ its `spec_overrides.txt`).
+- `patches/<app>/*.diff`: diffs applied by build.yml input `patches` (header = what + upstream commit; docs/inspect.md).
+- `tools/fakes/*.py`: stdlib fake devices, inspect.yml input `sidecar` + `adb_reverse` (docs/inspect.md).
+- `.github/workflows/devicelab.yml` + `docs/devicelab.md`: real phone on Firebase Test Lab, inert until set up.
+- `tests/`: local regression guards (no CI job); run line at the top of each file (`uv run --no-project tests/test_*.py`, `bash tests/inject_test.sh`).
 - NOTES / RUN LOGS go in `runs/*.md` (git-ignored = local only, never committed; e.g. `runs/log.md`). Only the
   `runs/*.txt` excerpts are tracked (cited upstream: keep unchanged). Task status lives in the author's private tracker.
 
@@ -35,7 +39,7 @@ Read the run's Summary page first (host arch, image digest, pip versions, lines 
   say so when reporting results.
 - Inputs reach the shell ONLY through `env:` variables (never `${{ inputs.x }}` inside `run:`; since
   2026-11-14, inputs will come from Discord/Reddit reports); never add a trigger that untrusted users can
-  fire (pull_request_target, issue_comment, ...). `contents: write` only on inspect's `shots` job and report.yml's `publish` job.
+  fire (pull_request_target, issue_comment, ...). `contents: write` only on inspect's `shots` job and report.yml's `publish` job; `id-token: write` only on devicelab.yml's login (`test`) job.
 
 ## Cache protocol (author, 2026-11-12)
 Caches hide bugs (run #1 reproduced a pip bug that lives in the project `.buildozer` build venv;

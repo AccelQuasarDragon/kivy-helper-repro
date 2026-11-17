@@ -2,7 +2,9 @@
 # Drive one APK on a running emulator: install, launch, taps, a screenshot after each step,
 # and the emulator's own logcat. Always exits 0: results are files, the summary step reads them.
 # env: APK (path), PKG (package name), OUT (dir), TAPS ('x,y[,wait_s];...'), LAUNCH_WAIT (s),
-#      SETTLE (s idle after boot + launcher focus, before install; default 10)
+#      SETTLE (s idle after boot + launcher focus, before install; default 10),
+#      ADB_REVERSE ('P1;P2': `adb reverse tcp:P tcp:P` after install, before launch, so the app's
+#      127.0.0.1:P reaches the runner's port P, e.g. a sidecar fake device; result -> OUT/adb_reverse.txt)
 # OUT/system_dialogs.txt = system dialogs of OTHER apps (ANR / crash) found and how each was dismissed
 # (settle, before launch, before the launch shot, before each tap); the app's own: LEFT OPEN.
 # OUT/pid_at_end.txt = the app state at the end, one of: <pid(s)> | none (app gone) |
@@ -12,7 +14,7 @@ mkdir -p "$OUT"
 # A retry (attempt 2) reuses OUT: move the previous attempt's files to OUT/prev_attempt_<k>/ so
 # its pid / errors / screenshots can never be reported as this attempt's (the static facts stay).
 prev=(pid_at_end.txt errors.txt install.txt launch.txt logcat.txt logcat_clean.txt wm_size.txt
-      device_sdk.txt device_fingerprint.txt system_dialogs.txt)
+      device_sdk.txt device_fingerprint.txt system_dialogs.txt adb_reverse.txt)
 found=0
 for f in "${prev[@]}"; do [ -e "$OUT/$f" ] && found=1; done
 for f in "$OUT"/*.png; do [ -e "$f" ] && found=1; done
@@ -120,6 +122,19 @@ if ! adb install -r -g "$APK" > "$OUT/install.txt" 2>&1; then
   echo 'install failed' >> "$OUT/errors.txt"
   if alive; then echo 'not-installed' > "$OUT/pid_at_end.txt"; else echo 'no-device' > "$OUT/pid_at_end.txt"; fi
 else
+  # ports validated by inspect.yml's check job (digits, 1-65535); re-checked here
+  IFS=';' read -r -a rports <<< "${ADB_REVERSE:-}"
+  for p in "${rports[@]}"; do
+    p=$(echo "$p" | tr -d ' ')
+    [ -n "$p" ] || continue
+    if [[ "$p" =~ ^[0-9]{1,5}$ ]] && adb reverse "tcp:$p" "tcp:$p" >/dev/null 2>&1; then
+      echo "tcp:$p -> tcp:$p ok" >> "$OUT/adb_reverse.txt"
+    else
+      echo "tcp:$p FAILED" >> "$OUT/adb_reverse.txt"
+      echo "adb reverse tcp:$p failed" >> "$OUT/errors.txt"
+    fi
+  done
+  [ ! -s "$OUT/adb_reverse.txt" ] || adb reverse --list >> "$OUT/adb_reverse.txt" 2>&1
   clear_dialogs 'before launch'
   adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 > "$OUT/launch.txt" 2>&1
   sleep "${LAUNCH_WAIT:-30}"

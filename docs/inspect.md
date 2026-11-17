@@ -42,6 +42,7 @@ For people and for LLMs picking this up later. Workflow: `.github/workflows/insp
    PNG link pasted in Discord unfurls as an inline image.
    It also writes a Discord **card page** (`shots/<run_id>/index.html`, served by GitHub Pages:
    one embed with title + result line + sheet): see [cards.md](cards.md).
+   And `shots/<run_id>/inputs.json`: every dispatch input of the run, so a report can show how to recreate it.
 5. **Summary**: inputs, build image digest, emulator image + fingerprint, cache level + hit,
    COLD/WARM, static facts, logcat hits (Python tracebacks / errors / FATAL, first traceback,
    first lines of the app's `python` tag), screenshot count, and the GPU warning in bold.
@@ -70,10 +71,79 @@ The shots job downloads the name the inspect job outputs, so a re-run in a later
 | cache | `off` (cold) / `sdk` / `full`, as in build.yml, plus the built-APK cache when not `off` |
 | image | buildozer container image (empty = build.yml's default, `ghcr.io/kivy/buildozer:latest`) |
 | fail_on_death | true = the inspect job FAILS at its last step (after the artifact upload; the shots job still publishes) when the verdict is `APP DIED` or `APP NOT INSTALLED`; default false (stays green) |
+| patches | build only: diffs of THIS repo applied to the source before the build, `;` separated, each `patches/<name>.diff` (below) |
+| sidecar | a fake device started on the runner before the app: `tools/fakes/<name>.py` (below); empty = none |
+| adb_reverse | ports forwarded device -> runner before launch, `;` separated, each 1-65535 (e.g. `8102;18080`); empty = none |
 
 Spec layering in a build (build.yml): the app's own `buildozer.spec`, else `buildozer init` ->
 the app dir's `spec_overrides.txt` (key=value lines) -> non-empty form inputs -> `extra` ->
 `android.archs+=<add_archs>` (`tools/patch_spec.py` supports `key+=item` = append if missing).
+Patches come BEFORE all of that (they may change the spec too).
+Base spec, first found (since 2026-11-16; the build log and summary print `base spec: ...`):
+(1) `buildozer.spec` in the app dir; (2) `buildozer.spec` at the source root (the fetched repo's root, else
+this repo's root) when its `[app] source.dir` is the app dir: the common "spec at the root, code in `source.dir`"
+layout (e.g. controlP: `app` = `src`, root spec has `source.dir = src`). It is copied with `source.dir = .`, since
+the build dir holds the app dir's contents. Other relative paths in that spec are NOT rewritten: the build
+prints a warning listing the keys present (`p4a.local_recipes`, `p4a.hook`, `icon.filename`, `presplash.filename`,
+`android.add_src`, `android.add_resources`, ... unless written with `%(source.dir)s`). (3) `buildozer init`.
+A root spec that is a symlink, cannot be parsed, or has a `source.dir` outside `[A-Za-z0-9_./-]` falls back to init.
+So `repo` builds whose app dir has no spec now use the root spec when its source.dir matches: runs before this
+(e.g. controlP R1-R3, built from `buildozer init`) are NOT comparable with later ones; the summary's
+`base spec:` line records which spec each run used. A root spec whose `source.dir` is another dir is not used, and the
+log says why. (Before this, controlP runs R1-R3 fell back to `buildozer init` and failed.)
+`tools/patch_spec.py` replaces the UNCOMMENTED key when a spec has both `#key = ...` and `key = ...`, and drops a
+multi-line value's continuation lines (e.g. `requirements` over several lines).
+
+## Patches (build.yml / inspect.yml / matrix.yml input `patches`)
+- A patch is a `git diff` file in this repo under `patches/` (e.g. `patches/controlp/insets_fix.diff`).
+- Each path must match `patches/[A-Za-z0-9._/-]+.diff` with no `..`; anything else fails the run at once.
+- build.yml applies them in the given order with `git apply --verbose`, in the root of the source being built.
+- That is the fetched repo's root when `repo` is set (not the `app` dir), else this repo's root.
+- Any patch that does not apply fails the run: a patched build never silently runs unpatched.
+- The build summary lists every applied patch with its sha256; `patches_applied.txt` is in the build artifact.
+- The patch list (paths + sha256) joins the `full` and `apk` cache keys, so a patched APK is never restored for an unpatched run.
+- Text before the first `diff --git` line is a comment (git apply ignores it): say what the patch does and which upstream commit it is against.
+- `.gitattributes` keeps `patches/**` byte-exact (`-text`): no line-ending conversion on any OS.
+- matrix.yml takes `patches` per element of its `builds` JSON.
+
+## Sidecar + adb_reverse: fake devices on the runner
+- `sidecar` = a script in `tools/fakes/` (stdlib Python), started with `python3 -u` on the runner before the emulator boots.
+- It keeps running through the emulator steps. Its output is `sidecar.log` in the inspect artifact.
+- The summary says whether it was still running at the end and shows its first 40 lines.
+- `adb_reverse` = ports. After install and before launch, `tools/emu_run.sh` runs `adb reverse tcp:P tcp:P` for each.
+- Then the app's `127.0.0.1:P` on the emulator reaches the runner's port P, i.e. the sidecar.
+- The result is `adb_reverse.txt` (+ the summary). A failed port is also in `errors.txt`.
+- The emulator retry (attempt 2) sets the ports again on the new emulator.
+- Both need the emulator (refused with `static_only`). Both empty = exactly the old behaviour.
+- The summary also shows the app's `STUB ...` lines (logcat tag python) in their own block.
+
+## Driving controlP (yabb85/controlP) with a fake Pioneer player
+The app leaves its Home screen only after it finds a Pioneer network player on the LAN (SSDP), then
+talks to it over TCP port 8102 and fetches its UPnP description (+ album art) over HTTP.
+An emulator on a CI runner has no such player, so:
+- `tools/fakes/pioneer.py` is a fake player: HTTP on 18080 (`/description.xml`, `/art/<name>.png` generated PNGs)
+  and the Pioneer text protocol on 8102 (power, input, `?GAP` screen, `?GIA` list lines, `?GIC` art, `GHP` open line, `PB` keys).
+- It replies to every command the app reads a reply for, and to none of the others (a stray reply would be read as
+  the answer to the next command). It never closes a connection (the app would spin on EOF).
+- Menu: root "Music Server" -> 5 folders -> 6 tracks -> play screen (FitImage loads the art over HTTP).
+- Every request / reply is a `FAKEPIONEER ...` line in `sidecar.log`.
+- `patches/controlp/fake_pioneer.diff` makes `scan()` skip SSDP and use `http://127.0.0.1:18080/description.xml`.
+  The rest is their real code (requests + lxml for the description, api.py over TCP).
+- Run it with: repo `yabb85/controlP`, ref `cad5d5c626516dcbf18719194c92e63f06128d62`, app `src`,
+  patches `patches/controlp/fake_pioneer.diff`, sidecar `tools/fakes/pioneer.py`, adb_reverse `8102;18080`.
+- Other controlP patches (all against cad5d5c, combinable unless said):
+  `insets_fix.diff` (Bug 1 fix: pads a root box by the system bar insets, logs `STUB insets ... applied=`),
+  `shadows_on.diff` (removes their `disable_shadows()` call: KivyMD BoxShadow + its Fbo per elevated widget),
+  `demo_device.diff` (the same fake INSIDE the app, for a real phone with no runner: devicelab.yml; never with fake_pioneer.diff).
+- `demo_device.diff` carries a byte-identical copy of `tools/fakes/pioneer.py`. After changing the fake, regenerate it:
+  copy the fake to `src/controlp/pioneer/_fake_pioneer.py` in a pristine LF checkout of cad5d5c (plus the scan() hunk),
+  run `git diff --no-index` against the pristine tree, fix the `a/` `b/` prefixes, keep the comment header.
+- Tap coordinates (pixel_6, 1080x2400; GUESSES from the kv layouts until a launch screenshot is read):
+  Home device card `540,600`; input screen "Music Server" (4th list row) `540,800`;
+  explore first row `540,360` (folder), then `540,360` again (track -> play screen).
+- Their Home card image is `src/controlp/data/images/N-50A.jpg` (the fake's modelName is `N-50A`).
+- Their spec does not list `requests` (upnp.py imports it). If the launch logcat shows
+  `ModuleNotFoundError: requests`, add `requirements+=requests` to `extra` (it would then differ from their build).
 
 ## Built-in test apps
 - `stub/`: minimal Kivy label (build.yml's default; unchanged).
@@ -177,7 +247,8 @@ never put reporter names in labels, commits or docs. Screenshots land in a publi
   `issue_comment` / other triggers strangers can fire.
 - Every input reaches the shell via `env:` (never `${{ inputs.x }}` inside `run:`); the `check`
   job validates apk_url (one https URL), artifact_run (digits), artifact_name (strict charset),
-  api_level, profile, launch_wait, taps before any build.
+  api_level, profile, launch_wait, taps, patches (`patches/...diff`, no `..`), sidecar
+  (`tools/fakes/<name>.py`: only scripts of this repo run) and adb_reverse (port numbers) before any build.
 - `contents: write` only on the `shots` job; the push uses the run's own `GITHUB_TOKEN`
   (`tools/push_shots.sh`, shared with report.yml's `publish` job).
   `actions: read` only on the `fetch` job (artifact source), pinned to `github.repository`.

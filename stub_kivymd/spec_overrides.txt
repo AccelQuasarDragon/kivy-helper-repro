@@ -5,6 +5,9 @@
 # materialshapes + pycairo are needed: the first touch reaches them (MDCard hover/state layer -> kivymd.uix.list ->
 # fitimage -> materialshapes; without them every tap crashed the app, 7 cold inspect runs 2026-11-15).
 # Built + ran with p4a develop in run 43733325270.
+# materialshapes version: UNPINNED here, so pip takes the newest on PyPI at build time (no p4a recipe pins it, as far as
+# checked; unverified). The 2026-11-15 bundle had materialshapes-0.3 (apk_pkgs.py). Read the "bundled Python packages"
+# block of each inspect summary; pin materialshapes==0.3 here if two runs must bundle the same version.
 title = StubKivyMD
 package.name = stubkivymd
 package.domain = org.khr

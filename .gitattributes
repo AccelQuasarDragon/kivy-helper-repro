@@ -1,0 +1,2 @@
+# patches are applied byte-exact by git apply: never convert their line endings
+patches/** -text

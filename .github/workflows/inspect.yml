@@ -68,6 +68,15 @@ on:
         description: 'Fail the inspect job at the end (after artifacts + shots data) when the app died or did not install'
         type: boolean
         default: false
+      patches:
+        description: 'Build only: diffs of THIS repo applied to the source before the build, ; separated (patches/<...>.diff)'
+        default: ''
+      sidecar:
+        description: 'Fake device script started on the runner before the app (tools/fakes/<name>.py); log = sidecar.log'
+        default: ''
+      adb_reverse:
+        description: 'Ports forwarded device -> runner (adb reverse tcp:P tcp:P) before launch, ; separated (e.g. 8102;18080)'
+        default: ''
 
 run-name: '${{ inputs.label }} | inspect | ${{ inputs.apk_url != '''' && ''apk_url'' || inputs.artifact_run != '''' && format(''artifact {0}'', inputs.artifact_name) || (inputs.repo || inputs.app || ''stub_kivymd'') }} | api ${{ inputs.api_level }} | cache ${{ inputs.cache }}'
 
@@ -104,6 +113,9 @@ jobs:
           LAUNCH_WAIT: ${{ inputs.launch_wait }}
           TAPS: ${{ inputs.taps }}
           STATIC_ONLY: ${{ inputs.static_only }}
+          PATCHES: ${{ inputs.patches }}
+          SIDECAR: ${{ inputs.sidecar }}
+          ADB_REVERSE: ${{ inputs.adb_reverse }}
         run: |
           fail() { echo "::error::$1"; exit 1; }
           [ -z "$APK_URL" ] || [[ "$APK_URL" =~ ^https://[^[:space:]\'\"\`]+$ ]] || fail 'apk_url must be one https URL'
@@ -111,6 +123,22 @@ jobs:
           [[ "$PROFILE" =~ ^[A-Za-z0-9_.-]+$ ]] || fail 'bad profile'
           [[ "$LAUNCH_WAIT" =~ ^[0-9]{1,3}$ ]] || fail 'launch_wait must be whole seconds'
           [[ "$TAPS" =~ ^[0-9,.\;\ ]*$ ]] || fail 'taps: only x,y[,wait_s] steps separated by ;'
+          # patches: build.yml re-checks each path and that the file exists
+          IFS=';' read -r -a plist <<< "$PATCHES"
+          for p in "${plist[@]}"; do
+            p="${p//[[:space:]]/}"
+            [ -n "$p" ] || continue
+            case "$p" in *..*) fail "patches: no .. in a path: $p";; esac
+            [[ "$p" =~ ^patches/[A-Za-z0-9._/-]+\.diff$ ]] || fail "patches: each path must be patches/<name>.diff: $p"
+          done
+          [ -z "$SIDECAR" ] || [[ "$SIDECAR" =~ ^tools/fakes/[A-Za-z0-9._-]+\.py$ ]] || fail 'sidecar must be tools/fakes/<name>.py'
+          IFS=';' read -r -a ports <<< "$ADB_REVERSE"
+          for port in "${ports[@]}"; do
+            port="${port//[[:space:]]/}"
+            [ -n "$port" ] || continue
+            [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -le 65535 ] || fail "adb_reverse: each port a number 1-65535: $port"
+          done
+          if [ "$STATIC_ONLY" = 'true' ] && [ -n "$SIDECAR$ADB_REVERSE" ]; then fail 'sidecar / adb_reverse need the emulator: unset static_only'; fi
           # APK source: exactly one of apk_url / artifact_run + artifact_name / a build
           [ -z "$ARTIFACT_RUN" ] || [[ "$ARTIFACT_RUN" =~ ^[1-9][0-9]{0,19}$ ]] || fail 'artifact_run must be a numeric run ID (the number in .../actions/runs/<id>)'
           [ -z "$ARTIFACT_NAME" ] || [[ "$ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,100}$ ]] || fail 'artifact_name: 1-100 of A-Z a-z 0-9 . _ -'
@@ -123,7 +151,7 @@ jobs:
           if [ "$source" != build ]; then
             # build inputs would be silently ignored: refuse them instead
             set_build=''
-            for v in REPO APP ARCHS EXTRA APP_CONFIG; do [ -z "${!v}" ] || set_build="$set_build ${v,,}"; done
+            for v in REPO APP ARCHS EXTRA APP_CONFIG PATCHES; do [ -z "${!v}" ] || set_build="$set_build ${v,,}"; done
             [ "$REF" = 'HEAD' ] || [ -z "$REF" ] || set_build="$set_build ref"
             # no build = no image and no cache: a non-default value would be claimed in the run name / summary
             [ -z "$IMAGE" ] || set_build="$set_build image"
@@ -149,6 +177,7 @@ jobs:
       add_archs: ${{ needs.check.outputs.add_archs }}
       extra: ${{ inputs.extra }}
       app_config: ${{ inputs.app_config }}
+      patches: ${{ inputs.patches }}
       cache: ${{ inputs.cache }}
       apk_cache: ${{ inputs.cache != 'off' }}
 
@@ -232,6 +261,9 @@ jobs:
       TAPS: ${{ inputs.taps }}
       LAUNCH_WAIT: ${{ inputs.launch_wait }}
       CACHE: ${{ inputs.cache }}
+      PATCHES: ${{ inputs.patches }}
+      SIDECAR: ${{ inputs.sidecar }}
+      ADB_REVERSE: ${{ inputs.adb_reverse }}
       APK_HIT: ${{ needs.build.outputs.apk_hit || 'n/a' }}
       COLD: ${{ needs.build.outputs.cold || 'n/a' }}
       CACHES: ${{ needs.build.outputs.caches || 'n/a' }}
@@ -273,16 +305,19 @@ jobs:
           mapfile -t apks < <(find apkdl -name '*.apk' | sort)
           [ "${#apks[@]}" -gt 0 ] || { echo '::error::no APK found'; exit 1; }
           apk="${apks[0]}"
-          echo "APK=$PWD/$apk" >> "$GITHUB_ENV"
+          # the APK comes from an untrusted build: every value goes to GITHUB_ENV as ONE line (no CR / LF),
+          # else a crafted name / badging line could define more variables for later steps
+          envset() { printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr -d '\r\n')" >> "$GITHUB_ENV"; }
+          envset APK "$PWD/$apk"
           aapt2=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2
           "$aapt2" dump badging "$apk" > "$OUT/badging.txt"
-          pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$OUT/badging.txt")
-          echo "PKG=$pkg" >> "$GITHUB_ENV"
-          echo "TARGET_SDK=$(sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p" "$OUT/badging.txt")" >> "$GITHUB_ENV"
-          echo "MIN_SDK=$(sed -n "s/^\(minSdkVersion\|sdkVersion\):'\([0-9]*\)'.*/\2/p" "$OUT/badging.txt" | head -1)" >> "$GITHUB_ENV"
-          echo "ABIS=$(sed -n "s/^native-code: //p" "$OUT/badging.txt" | tr -d "'")" >> "$GITHUB_ENV"
-          echo "APK_NAME=$(basename "$apk")" >> "$GITHUB_ENV"
-          echo "APK_SHA=$(sha256sum "$apk" | cut -c1-64)" >> "$GITHUB_ENV"
+          pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$OUT/badging.txt" | head -1)
+          envset PKG "$pkg"
+          envset TARGET_SDK "$(sed -n "s/^targetSdkVersion:'\([0-9]*\)'.*/\1/p" "$OUT/badging.txt" | head -1)"
+          envset MIN_SDK "$(sed -n "s/^\(minSdkVersion\|sdkVersion\):'\([0-9]*\)'.*/\2/p" "$OUT/badging.txt" | head -1)"
+          envset ABIS "$(sed -n "s/^native-code: //p" "$OUT/badging.txt" | head -1 | tr -d "'")"
+          envset APK_NAME "$(basename "$apk")"
+          envset APK_SHA "$(sha256sum "$apk" | cut -c1-64)"
           printf '%s\n' "${apks[@]}" > "$OUT/apks_found.txt"
           python3 tools/apk_pkgs.py "$apk" > "$OUT/python_packages.md"
 
@@ -292,6 +327,23 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      # sidecar: a fake device (tools/fakes/*.py, stdlib) the app reaches through adb reverse. It keeps
+      # running across the next steps (the runner ends it with the job). Output -> out/sidecar.log.
+      - name: Start sidecar (fake device)
+        if: inputs.static_only == false && inputs.sidecar != ''
+        run: |
+          [ -f "$SIDECAR" ] || { echo "::error::no such sidecar in this repo: $SIDECAR"; exit 1; }
+          nohup python3 -u "$SIDECAR" > "$OUT/sidecar.log" 2>&1 &
+          echo "$!" > sidecar.pid
+          sleep 3
+          if kill -0 "$(cat sidecar.pid)" 2>/dev/null; then echo "sidecar running (pid $(cat sidecar.pid))";
+          else
+            echo "::error::sidecar exited at once (its log below)"
+            token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            echo "::stop-commands::$token"; cat "$OUT/sidecar.log"; echo "::$token::"
+            exit 1
+          fi
 
       # emu_run.sh always exits 0 (results are files), so a failed step here = the emulator itself.
       # The action has no retry input: attempt 2 runs only when attempt 1 failed.
@@ -408,6 +460,7 @@ jobs:
             echo "- $verdict"
             echo "- cache input: \`$CACHE\`; per cache: $CACHES"
             echo "- inputs: static_only \`$STATIC_ONLY\`, api_level \`$API_LEVEL\`, profile \`$PROFILE\`, launch_wait \`$LAUNCH_WAIT\`, taps \`$TAPS\`"
+            echo "- patches \`${PATCHES:-none}\` (sha256 of each: the build job summary), sidecar \`${SIDECAR:-none}\`, adb_reverse \`${ADB_REVERSE:-none}\`"
             echo '### static facts'
             echo "- package \`$PKG\`, targetSdk \`$TARGET_SDK\`, minSdk \`$MIN_SDK\`, ABIs \`$ABIS\`"
             if [ "${TARGET_SDK:-0}" -ge 35 ] 2>/dev/null; then
@@ -432,6 +485,15 @@ jobs:
                 echo '```'; cut -c1-200 "$OUT/system_dialogs.txt" | head -20; echo '```'
               fi
               [ -f "$OUT/errors.txt" ] && { echo '- driver errors:'; echo '```'; cat "$OUT/errors.txt"; echo '```'; }
+              [ ! -s "$OUT/adb_reverse.txt" ] || { echo '- adb reverse (device port -> runner port):'; echo '```'; cut -c1-200 "$OUT/adb_reverse.txt"; echo '```'; }
+              if [ -n "$SIDECAR" ]; then
+                if [ -f sidecar.pid ] && kill -0 "$(cat sidecar.pid)" 2>/dev/null; then sc='still running at the end'; else sc='NOT running at the end'; fi
+                echo "- sidecar \`$SIDECAR\`: $sc; $(wc -l < "$OUT/sidecar.log" 2>/dev/null || echo 0) log lines (sidecar.log in the artifact)"
+                echo '#### sidecar log (first 40 lines)'
+                echo '```'
+                head -40 "$OUT/sidecar.log" 2>/dev/null | tr -d '`' | cut -c1-300 || true
+                echo '```'
+              fi
               echo "- screenshots: $(ls "$OUT"/*.png 2>/dev/null | wc -l) (sheet + raw links: the shots job summary below)"
               if [ -f "$OUT/logcat.txt" ]; then
                 echo '#### logcat: Python tracebacks / errors / FATAL (first 40 hits)'
@@ -447,6 +509,10 @@ jobs:
                 else
                   echo '- no Python traceback in logcat'
                 fi
+                echo '#### STUB lines (measurements printed by our stubs / patches, first 40)'
+                echo '```'
+                grep -E ' python *: .*STUB ' "$OUT/logcat_clean.txt" | sed -E 's/^.* python *: //' | head -40 | cut -c1-300 || true
+                echo '```'
                 echo '#### app output lines tagged python (first 30)'
                 echo '```'
                 grep -E ' python *: ' "$OUT/logcat_clean.txt" | head -30 | cut -c1-300 || true
@@ -500,6 +566,46 @@ jobs:
           mkdir -p pub
           cp out/*.png pub/
           uv run --script tools/contact_sheet.py pub/sheet.png out/*.png
+
+      # inputs.json = every dispatch input of this run (none is a secret), so a report can show how to
+      # recreate the run (card_page.py "Settings / recreate" column + "How to recreate" section).
+      - name: Record inputs (inputs.json)
+        env:
+          I_LABEL: ${{ inputs.label }}
+          I_APK_URL: ${{ inputs.apk_url }}
+          I_ARTIFACT_RUN: ${{ inputs.artifact_run }}
+          I_ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          I_REPO: ${{ inputs.repo }}
+          I_REF: ${{ inputs.ref }}
+          I_APP: ${{ inputs.app }}
+          I_ARCHS: ${{ inputs.archs }}
+          I_EXTRA: ${{ inputs.extra }}
+          I_APP_CONFIG: ${{ inputs.app_config }}
+          I_STATIC_ONLY: ${{ inputs.static_only }}
+          I_API_LEVEL: ${{ inputs.api_level }}
+          I_PROFILE: ${{ inputs.profile }}
+          I_TAPS: ${{ inputs.taps }}
+          I_LAUNCH_WAIT: ${{ inputs.launch_wait }}
+          I_CACHE: ${{ inputs.cache }}
+          I_IMAGE: ${{ inputs.image }}
+          I_FAIL_ON_DEATH: ${{ inputs.fail_on_death }}
+          I_PATCHES: ${{ inputs.patches }}
+          I_SIDECAR: ${{ inputs.sidecar }}
+          I_ADB_REVERSE: ${{ inputs.adb_reverse }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          keys = ['label', 'apk_url', 'artifact_run', 'artifact_name', 'repo', 'ref', 'app', 'archs', 'extra',
+                  'app_config', 'static_only', 'api_level', 'profile', 'taps', 'launch_wait', 'cache', 'image',
+                  'fail_on_death', 'patches', 'sidecar', 'adb_reverse']
+          rec = {'workflow': 'inspect.yml', 'run_id': os.environ['RUN_ID'],
+                 'inputs': {k: os.environ.get('I_' + k.upper(), '') for k in keys}}
+          with open('pub/inputs.json', 'w', encoding='utf-8') as f:
+              json.dump(rec, f, indent=1)
+          PY
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"; cat pub/inputs.json; echo "::$token::"
 
       # One Discord embed card per run (docs/cards.md), served by GitHub Pages from branch `shots`.
       # tools/card_page.py escapes every text value and allows only https URLs on known hosts.

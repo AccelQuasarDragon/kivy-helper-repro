@@ -47,6 +47,9 @@ on:
       app_config:
         description: 'JSON written to app_config.json next to main.py (empty = none); stub_kivymd reads it'
         default: ''
+      patches:
+        description: 'Diffs of THIS repo applied (git apply) to the built source before the spec, ; separated (patches/<...>.diff)'
+        default: ''
       command:
         description: 'buildozer command'
         default: 'android debug'
@@ -73,6 +76,7 @@ on:
       add_archs: {type: string, default: ''}
       extra: {type: string, default: ''}
       app_config: {type: string, default: ''}
+      patches: {type: string, default: ''}
       command: {type: string, default: 'android debug'}
       cache: {type: string, default: 'off'}
       apk_cache: {type: boolean, default: false}
@@ -112,6 +116,7 @@ jobs:
       ADD_ARCHS: ${{ inputs.add_archs }}
       EXTRA: ${{ inputs.extra }}
       APP_CONFIG: ${{ inputs.app_config }}
+      PATCHES: ${{ inputs.patches }}
       COMMAND: ${{ inputs.command }}
       CACHE: ${{ inputs.cache }}
       APK_CACHE: ${{ inputs.apk_cache }}
@@ -133,7 +138,7 @@ jobs:
       - name: Pull image, record digest
         run: |
           docker pull "$IMAGE"
-          echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")" >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE" | tr -d '\r\n')" >> "$GITHUB_ENV"
           echo "HOST_ARCH=$(uname -m)" >> "$GITHUB_ENV"
 
       # SRC_ID = what was built: repo@resolved-sha:app, or local:<app>:<hash of its tracked files>.
@@ -159,6 +164,32 @@ jobs:
           echo "SRC_ID=$id" >> "$GITHUB_ENV"
           echo "source: $id"
 
+      # patches: each a diff in THIS repo (patches/...diff), applied in order with git apply in the
+      # source tree being built (the fetched repo's root, else this repo's root). Any failure fails the run.
+      # PATCH_ID (hash of the path + sha256 list) joins the cache keys; patches_applied.txt feeds the summary.
+      - name: Apply patches
+        run: |
+          : > patches_applied.txt
+          echo "PATCH_ID=none" >> "$GITHUB_ENV"
+          [ -n "$PATCHES" ] || { echo 'no patches'; exit 0; }
+          if [ -n "$REPO" ]; then tree=src; else tree=.; fi
+          IFS=';' read -r -a list <<< "$PATCHES"
+          n=0
+          for p in "${list[@]}"; do
+            p=$(printf '%s' "$p" | tr -d '[:space:]')
+            [ -n "$p" ] || continue
+            case "$p" in *..*) echo "::error::bad patch path (..): $p"; exit 1;; esac
+            [[ "$p" =~ ^patches/[A-Za-z0-9._/-]+\.diff$ ]] || { echo "::error::bad patch path (want patches/<name>.diff): $p"; exit 1; }
+            [ -f "$p" ] || { echo "::error::no such patch in this repo: $p"; exit 1; }
+            sha=$(sha256sum "$p" | cut -c1-64)
+            echo "applying $p (sha256 $sha) in $tree"
+            git -C "$tree" apply --verbose "$GITHUB_WORKSPACE/$p" || { echo "::error::git apply failed: $p"; exit 1; }
+            echo "$p $sha" >> patches_applied.txt
+            n=$((n + 1))
+          done
+          echo "PATCH_ID=$(sha256sum patches_applied.txt | cut -c1-16)" >> "$GITHUB_ENV"
+          echo "$n patch(es) applied"
+
       # Exact keys only, no restore-keys: a cache from different inputs must never be restored.
       - name: Cache keys
         id: ck
@@ -166,8 +197,8 @@ jobs:
         run: |
           h() { printf '%s|' "$@" | sha256sum | cut -c1-16; }
           echo "sdk=bz-sdk-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$EXTRA")" >> "$GITHUB_OUTPUT"
-          echo "full=bz-full-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$EXTRA" "$ARCHS" "$ADD_ARCHS" "$P4A_BRANCH" "$REQUIREMENTS" "$SRC_ID" "$APP_CONFIG")" >> "$GITHUB_OUTPUT"
-          echo "apk=bz-apk-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$SRC_ID" "$REQUIREMENTS" "$P4A_BRANCH" "$ARCHS" "$ADD_ARCHS" "$EXTRA" "$APP_CONFIG" "$COMMAND")" >> "$GITHUB_OUTPUT"
+          echo "full=bz-full-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$EXTRA" "$ARCHS" "$ADD_ARCHS" "$P4A_BRANCH" "$REQUIREMENTS" "$SRC_ID" "$APP_CONFIG" "$PATCH_ID")" >> "$GITHUB_OUTPUT"
+          echo "apk=bz-apk-$RUNNER_OS-$RUNNER_ARCH-$(h "$IMAGE_DIGEST" "$SRC_ID" "$REQUIREMENTS" "$P4A_BRANCH" "$ARCHS" "$ADD_ARCHS" "$EXTRA" "$APP_CONFIG" "$COMMAND" "$PATCH_ID")" >> "$GITHUB_OUTPUT"
 
       - name: Restore built APK (apk_cache)
         id: apk_restore
@@ -193,18 +224,65 @@ jobs:
           path: work/.buildozer
           key: ${{ steps.ck.outputs.full }}
 
-      - name: Make spec (app spec or buildozer init, then overrides)
+      - name: Make spec (app spec, root spec with source.dir = app, or buildozer init; then overrides)
         if: steps.apk_restore.outputs.cache-hit != 'true'
         run: |
           mkdir -p work cache
           sudo chmod -R a+rwX work cache
           (cd "$APP_DIR" && tar --exclude=.git --exclude=.buildozer --exclude=bin -cf - .) | tar -C work -xf -
+          # base spec, first found: (1) the app dir's own buildozer.spec; (2) the source root's
+          # buildozer.spec (fetched repo root, else this repo's root) when its [app] source.dir is the app
+          # dir (the common "spec at the root, code in source.dir" layout), copied with source.dir = .
+          # (work/ holds the app dir's contents); (3) buildozer init. Patches were applied before this step.
+          if [ -n "$REPO" ]; then root=src; else root=.; fi
           if [ -f work/buildozer.spec ]; then
-            echo "base spec: the app's own buildozer.spec"
+            base="the app dir's own buildozer.spec"
+          elif [ "$(realpath "$APP_DIR")" != "$(realpath "$root")" ] && [ -f "$root/buildozer.spec" ] && [ ! -L "$root/buildozer.spec" ]; then
+            # UNTRUSTED file: prints line 1 = source.dir (only [A-Za-z0-9_./-], else '(unsafe value)'),
+            # line 2 = names (fixed list) of keys whose relative paths would break in work/. Exit 3 = unreadable.
+            info=$(python3 - "$root/buildozer.spec" <<'PY'
+          import configparser, re, sys
+          c = configparser.ConfigParser(allow_no_value=True, strict=False, interpolation=None)
+          try:
+              c.read(sys.argv[1], encoding='utf-8')
+              sd = (c.get('app', 'source.dir', fallback='.') or '.').strip()
+          except Exception:
+              sys.exit(3)
+          print(sd if re.fullmatch(r'[A-Za-z0-9_./-]{1,200}', sd) else '(unsafe value)')
+          keys = ['p4a.local_recipes', 'p4a.hook', 'icon.filename', 'presplash.filename', 'icon.adaptive_foreground.filename',
+                  'icon.adaptive_background.filename', 'android.add_src', 'android.add_resources', 'android.add_assets',
+                  'android.add_jars', 'android.add_aars', 'android.add_libs_armeabi_v7a', 'android.add_libs_arm64_v8a',
+                  'android.add_libs_x86_64', 'android.res_xml', 'android.manifest_placeholders', 'android.extra_manifest_xml']
+          found = [k for k in keys if c.has_option('app', k) and '%(source.dir)s' not in (c.get('app', k) or '')]
+          print(' '.join(found))
+          PY
+            ) || info='(unreadable)'
+            sd=$(printf '%s\n' "$info" | sed -n 1p)
+            pathkeys=$(printf '%s\n' "$info" | sed -n 2p)
+            # belt and braces: never let spec text reach a later step unvalidated
+            [[ "$sd" =~ ^[A-Za-z0-9_./-]{1,200}$ ]] || { [ "$sd" = '(unreadable)' ] || sd='(unsafe value)'; }
+            [[ "$pathkeys" =~ ^[a-z0-9_.\ ]*$ ]] || pathkeys=''
+            if [[ "$sd" =~ ^[A-Za-z0-9_./-]{1,200}$ ]] && [[ "$sd" != /* ]] && [ -d "$root/$sd" ] &&
+               [ "$(realpath "$root/$sd")" = "$(realpath "$APP_DIR")" ]; then
+              cp "$root/buildozer.spec" work/buildozer.spec
+              python3 tools/patch_spec.py work/buildozer.spec 'source.dir=.'
+              base="repo root buildozer.spec (source.dir=$sd)"
+              if [ -n "$pathkeys" ]; then
+                echo "::warning::root spec copied into the app dir build: these keys hold paths relative to the repo root that are NOT rewritten and may break: $pathkeys"
+                base="$base; WARNING, paths not rewritten: $pathkeys"
+              fi
+            elif [ "$sd" = '(unreadable)' ]; then
+              base='buildozer init (image default): the repo root buildozer.spec could not be read (configparser error)'
+            else
+              base="buildozer init (image default): the repo root buildozer.spec has source.dir=$sd, not the app dir ${APP:-.}"
+            fi
           else
-            echo 'base spec: buildozer init (image default)'
-            docker run --rm -v "$PWD/work:/home/user/hostcwd" "$IMAGE" init
+            base='buildozer init (image default)'
           fi
+          echo "base spec: $base"
+          # one line, no CR / LF: a newline in a GITHUB_ENV value would define more variables
+          printf 'BASE_SPEC=%s\n' "$(printf '%s' "$base" | tr -d '\r\n')" >> "$GITHUB_ENV"
+          [[ "$base" != 'buildozer init'* ]] || docker run --rm -v "$PWD/work:/home/user/hostcwd" "$IMAGE" init
           sudo chmod -R a+rwX work
           args=()
           if [ -f work/spec_overrides.txt ]; then
@@ -222,18 +300,43 @@ jobs:
             printf '%s\n' "$APP_CONFIG" > work/app_config.json
             args+=('source.include_exts+=json')
           fi
+          # spec values come from the built repo: workflow commands off while they are printed
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
           python3 tools/patch_spec.py work/buildozer.spec "${args[@]}"
           echo '--- effective spec (non-comment lines) ---'
           grep -vE '^\s*(#|$)' work/buildozer.spec
+          echo "::$token::"
 
+      # One retry, only when the log shows an HTTP 429 (gradle / maven rate limit on parallel cold
+      # builds, e.g. a matrix): wait 60-120 s, keep attempt 1's log as build_attempt1.log, build again.
       - name: Build
         if: steps.apk_restore.outputs.cache-hit != 'true'
         run: |
           read -r -a cmd <<< "$COMMAND"
-          docker run --rm \
-            -v "$PWD/cache:/home/user/.buildozer" \
-            -v "$PWD/work:/home/user/hostcwd" \
-            "$IMAGE" "${cmd[@]}" 2>&1 | tee build.log
+          # the build prints UNTRUSTED text (the built repo's code runs): workflow commands are off while it runs
+          run_build() {
+            local rc=0 token
+            token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            echo "::stop-commands::$token"
+            docker run --rm \
+              -v "$PWD/cache:/home/user/.buildozer" \
+              -v "$PWD/work:/home/user/hostcwd" \
+              "$IMAGE" "${cmd[@]}" 2>&1 | tee build.log || rc=$?
+            echo "::$token::"
+            return "$rc"
+          }
+          if run_build; then exit 0; fi
+          if grep -qiE '(status code|HTTP|response code)[ :]*429|429 Too Many Requests' build.log; then
+            wait_s=$((60 + RANDOM % 61))
+            echo "::warning::build failed with HTTP 429 in the log: retrying once in $wait_s s (attempt 1 log: build_attempt1.log)"
+            mv build.log build_attempt1.log
+            sudo chmod -R a+rwX work cache || true
+            sleep "$wait_s"
+            run_build
+          else
+            exit 1
+          fi
 
       - name: Make cache dirs readable for saving
         if: always() && (inputs.cache != 'off' || inputs.apk_cache)
@@ -314,6 +417,14 @@ jobs:
             echo "- source: \`$SRC_ID\`"
             echo "- requirements: \`$REQUIREMENTS\`, p4a: \`$P4A_BRANCH\`, archs: \`$ARCHS\` (+ \`$ADD_ARCHS\`)  (empty = the app's own value)"
             echo "- extra: \`$EXTRA\`; app_config: \`$APP_CONFIG\`"
+            echo "- base spec: ${BASE_SPEC:-n/a (no spec step: APK restored or failed earlier)}"
+            if [ -s patches_applied.txt ]; then
+              echo "- patches applied (in order, git apply in the source tree):"
+              while read -r p sha; do echo "  - \`$p\` sha256 \`$sha\`"; done < patches_applied.txt
+            else
+              echo "- patches: none"
+            fi
+            [ ! -f build_attempt1.log ] || echo '- **build retried once after an HTTP 429 in attempt 1** (build_attempt1.log in the artifact)'
             if [ "$APK_HIT" = 'true' ]; then echo '- build skipped: APK restored from the apk cache'; exit 0; fi
             echo '### pip versions seen'
             echo '```'
@@ -337,6 +448,8 @@ jobs:
           name: ${{ inputs.artifact_name && format('{0}-a{1}', inputs.artifact_name, github.run_attempt) || format('build-{0}', github.run_number) }}
           path: |
             build.log
+            build_attempt1.log
+            patches_applied.txt
             work/buildozer.spec
             work/bin/*.apk
           retention-days: 14

@@ -1,0 +1,301 @@
+name: device lab
+
+# Run an APK on a REAL phone in Firebase Test Lab (FTL), free tier (Spark plan: no billing).
+# INERT until the author sets it up (docs/devicelab.md): without the 3 repo SECRETS
+# (GCP_WIF_PROVIDER, GCP_SERVICE_ACCOUNT, GCP_PROJECT) the run prints the setup doc link and ends green.
+# APK source: an APK artifact of another run of THIS repo (artifact_run + artifact_name), like inspect.yml.
+# Login: Workload Identity Federation (GitHub OIDC -> a service account), never a JSON key.
+# Only a crash is evidence: a clean run on a device that is not the reporter's disproves nothing.
+# workflow_dispatch ONLY. Every input reaches the shell through env: variables only.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: 'Run label (what question this answers)'
+        default: 'devicelab'
+      artifact_run:
+        description: 'Run ID (number in the run URL) of a run of THIS repo whose artifact holds the APK'
+        required: true
+      artifact_name:
+        description: 'Artifact name in that run, e.g. build-12 (exactly one .apk inside, with an arm64-v8a lib)'
+        required: true
+      device:
+        description: 'FTL device model id (gcloud firebase test android models list); redfin = Pixel 5'
+        default: 'redfin'
+      version:
+        description: 'Android API level on that device'
+        default: '30'
+      taps:
+        description: 'Robo script taps x,y[,wait_s] separated by ; (device pixels; the crawl stops after them)'
+        default: ''
+      timeout:
+        description: 'Test timeout, e.g. 5m (max 10m)'
+        default: '5m'
+
+run-name: '${{ inputs.label }} | devicelab | ${{ inputs.device }} API ${{ inputs.version }} | artifact ${{ inputs.artifact_name }}'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.v.outputs.ready }}
+    steps:
+      - name: Validate inputs + setup
+        id: v
+        shell: bash
+        env:
+          ARTIFACT_RUN: ${{ inputs.artifact_run }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          DEVICE: ${{ inputs.device }}
+          VERSION: ${{ inputs.version }}
+          TAPS: ${{ inputs.taps }}
+          TIMEOUT: ${{ inputs.timeout }}
+          WIF: ${{ secrets.GCP_WIF_PROVIDER }}
+          SA: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          PROJECT: ${{ secrets.GCP_PROJECT }}
+        run: |
+          fail() { echo "::error::$1"; echo "**DEVICELAB FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          if [ -z "$WIF" ] || [ -z "$SA" ] || [ -z "$PROJECT" ]; then
+            doc="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/main/docs/devicelab.md"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=device lab not set up::repo secrets GCP_WIF_PROVIDER / GCP_SERVICE_ACCOUNT / GCP_PROJECT missing: nothing ran ($doc)"
+            {
+              echo '## device lab: NOT SET UP (nothing ran)'
+              echo "The repo secrets \`GCP_WIF_PROVIDER\`, \`GCP_SERVICE_ACCOUNT\` and \`GCP_PROJECT\` are not all set."
+              echo
+              echo "One-time setup, read it first: $doc"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          [[ "$ARTIFACT_RUN" =~ ^[1-9][0-9]{0,19}$ ]] || fail 'artifact_run must be a numeric run ID (the number in .../actions/runs/<id>)'
+          [[ "$ARTIFACT_NAME" =~ ^[A-Za-z0-9._-]{1,100}$ ]] || fail 'artifact_name: 1-100 of A-Z a-z 0-9 . _ -'
+          [[ "$DEVICE" =~ ^[A-Za-z0-9_.-]{1,40}$ ]] || fail 'device: a model id like redfin'
+          [[ "$VERSION" =~ ^[0-9]{2}$ ]] || fail 'version: an API level like 30'
+          [[ "$TAPS" =~ ^[0-9,.\;\ ]*$ ]] || fail 'taps: only x,y[,wait_s] steps separated by ;'
+          [[ "$TIMEOUT" =~ ^([1-9][0-9]{0,2})(s|m)$ ]] || fail 'timeout: like 300s or 5m'
+          secs=${BASH_REMATCH[1]}; [ "${BASH_REMATCH[2]}" = s ] || secs=$((secs * 60))
+          [ "$secs" -le 600 ] || fail 'timeout: at most 10m'
+          [[ "$PROJECT" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || fail 'repo secret GCP_PROJECT is not a project id'
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+  # the ONE job with `actions: read`: downloads the other run's artifact, checks it, re-uploads the
+  # APK as an artifact of THIS run (same pattern as inspect.yml's fetch job)
+  fetch:
+    needs: check
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the artifact of the other run
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          run-id: ${{ inputs.artifact_run }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          path: srcart
+
+      - name: Exactly one APK; an arm64-v8a lib for a real phone
+        env:
+          ARTIFACT_RUN: ${{ inputs.artifact_run }}
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+        run: |
+          fail() { echo "::error::$1"; echo "**FETCH FAILED:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          mapfile -t apks < <(find srcart -type f -name '*.apk' | sort)
+          [ "${#apks[@]}" -eq 1 ] || fail "artifact $ARTIFACT_NAME of run $ARTIFACT_RUN holds ${#apks[@]} .apk files (need exactly 1)"
+          unzip -Z1 "${apks[0]}" > apk_list.txt 2>/dev/null || fail "$(basename "${apks[0]}") is not a valid zip/APK"
+          abis=$(sed -n 's|^lib/\([^/]*\)/.*|\1|p' apk_list.txt | sort -u | paste -sd' ' -)
+          echo "native ABIs: ${abis:-none}"
+          grep -qw arm64-v8a <<< "$abis" || fail "no arm64-v8a lib (ABIs: ${abis:-none}): FTL physical phones are arm64"
+          mkdir -p apkin && cp "${apks[0]}" apkin/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devicelab-apk-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: apkin/*.apk
+          retention-days: 3
+          if-no-files-found: error
+
+  # the ONLY job with `id-token: write` (CLAUDE.md): it logs in to Google Cloud and runs the test
+  test:
+    needs: [check, fetch]
+    if: needs.check.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      LABEL: ${{ inputs.label }}
+      DEVICE: ${{ inputs.device }}
+      VERSION: ${{ inputs.version }}
+      TAPS: ${{ inputs.taps }}
+      TIMEOUT: ${{ inputs.timeout }}
+      PROJECT: ${{ secrets.GCP_PROJECT }}
+      SA: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # secrets are masked by GitHub already; the explicit masks also cover derived output (belt and braces)
+      # (repo SECRETS, not variables: a variable in an env: block is printed unmasked in the public log)
+      - name: Mask project + service account
+        run: |
+          echo "::add-mask::$PROJECT"
+          echo "::add-mask::$SA"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: devicelab-apk-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: apk
+
+      - uses: google-github-actions/auth@v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          project_id: ${{ secrets.GCP_PROJECT }}
+
+      - uses: google-github-actions/setup-gcloud@v3.0.1
+
+      # taps -> a Robo script: POINT_TAP + WAIT per step, then TERMINATE_CRAWL, so Robo does not
+      # crawl the app at random after the scripted steps (field names: FTL "Robo script reference")
+      - name: Robo script from taps
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          actions = [{'eventType': 'WAIT', 'delayTime': 20000}]  # app start (first run unpacks the app)
+          for step in os.environ.get('TAPS', '').split(';'):
+              step = step.replace(' ', '')
+              if not step:
+                  continue
+              m = re.fullmatch(r'(\d+),(\d+)(?:,(\d+(?:\.\d+)?))?', step)
+              if not m:
+                  raise SystemExit(f'bad tap step (want x,y[,wait_s]): {step}')
+              actions.append({'eventType': 'POINT_TAP', 'pointTapXCoordinate': int(m[1]), 'pointTapYCoordinate': int(m[2])})
+              actions.append({'eventType': 'WAIT', 'delayTime': int(float(m[3] or 5) * 1000)})
+          actions.append({'eventType': 'TERMINATE_CRAWL'})
+          with open('robo.json', 'w') as f:
+              json.dump(actions, f, indent=1)
+          PY
+          cat robo.json
+
+      - name: Run on Firebase Test Lab
+        id: ftl
+        run: |
+          apk=$(find apk -name '*.apk' | head -1)
+          echo "APK_SHA=$(sha256sum "$apk" | cut -c1-64)" >> "$GITHUB_ENV"
+          # the APK name comes from an untrusted build: one line only (no CR / LF) into GITHUB_ENV
+          printf 'APK_NAME=%s\n' "$(basename "$apk" | tr -d '\r\n')" >> "$GITHUB_ENV"
+          set +e  # a failed test must still reach the copy + summary steps
+          # gcloud echoes text from the APK (app name, results): workflow commands off meanwhile
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
+          gcloud firebase test android run --project "$PROJECT" --type robo --app "$apk" \
+            --device "model=$DEVICE,version=$VERSION,locale=en,orientation=portrait" \
+            --timeout "$TIMEOUT" --robo-script robo.json 2>&1 | tee ftl.log
+          rc=${PIPESTATUS[0]}
+          echo "::$token::"
+          set -e
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "gcloud exit code: $rc (0 passed, 10 a test failed, 15 inconclusive, 20 infrastructure error)"
+
+      # Results live in Test Lab's DEFAULT bucket of the project (Spark: no custom --results-bucket).
+      # Copying them needs read access to that bucket (Editor has it); if the copy fails, the summary
+      # says so and the results stay readable in the Firebase console (free).
+      - name: Copy results (logcat, screenshots, video)
+        id: copy
+        if: always() && steps.ftl.outcome != 'skipped'
+        run: |
+          path=$(grep -oE 'storage/browser/[^] ]+' ftl.log | head -1 | sed 's|^storage/browser/||; s|/*$||' || true)
+          mkdir -p results
+          if [ -n "$path" ] && gcloud storage cp -r "gs://$path/*" results/ > copy.log 2>&1; then
+            echo "copied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "copied=false" >> "$GITHUB_OUTPUT"
+            echo "results not copied (no bucket path in the gcloud output, or no read access): see copy.log"
+          fi
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
+          [ ! -f copy.log ] || tail -5 copy.log
+          find results -type f | head -50
+          echo "::$token::"
+
+      - name: Summary
+        if: always() && steps.ftl.outcome != 'skipped'
+        env:
+          RC: ${{ steps.ftl.outputs.rc }}
+          COPIED: ${{ steps.copy.outputs.copied }}
+        run: |
+          logcat=$(find results -type f -name 'logcat*' | head -1)
+          pat='Fatal signal|DEBUG *: |backtrace:|Python for android ended'
+          if [ -n "$logcat" ]; then
+            hits=$(grep -cE "$pat" "$logcat" || true)
+            if [ "${hits:-0}" != 0 ]; then state="**CRASH** ($hits crash line(s) in logcat: Fatal signal / DEBUG / backtrace / Python for android ended)"
+            else state='**APP OK** (no crash line in logcat)'; fi
+          else
+            state="**APP STATE UNKNOWN** (logcat not copied; gcloud exit code $RC; open the Firebase console: Test Lab -> this matrix)"
+          fi
+          {
+            echo "$state"
+            echo
+            echo "## device lab: $LABEL"
+            echo
+            echo '> **Only a crash is evidence.** A clean run on another phone (other GPU driver, other vendor build than the reporter, e.g. MIUI) disproves nothing.'
+            echo
+            echo "- device \`$DEVICE\`, API \`$VERSION\`, timeout \`$TIMEOUT\`, taps \`$TAPS\`"
+            echo "- APK \`$APK_NAME\` sha256 \`$APK_SHA\`"
+            echo "- gcloud exit code \`$RC\` (0 passed, 10 a test failed, 15 inconclusive, 20 infrastructure error); results copied: \`${COPIED:-false}\`"
+            if [ -n "$logcat" ]; then
+              echo '### logcat crash lines (first 40)'
+              echo '```'
+              grep -nE "$pat" "$logcat" | cut -c1-300 | head -40 | tr -d '`' || true
+              echo '```'
+              echo '### logcat lines tagged python (first 40)'
+              echo '```'
+              grep -E ' python *: ' "$logcat" | cut -c1-300 | head -40 | tr -d '`' || true
+              echo '```'
+            fi
+            echo "- files: $(find results -type f | wc -l) (artifact devicelab-${GITHUB_RUN_NUMBER}-a${GITHUB_RUN_ATTEMPT})"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$state"
+
+      # masks cover the log only: redact the project id + service account in files we upload
+      - name: Redact project id in uploaded logs
+        if: always() && steps.ftl.outcome != 'skipped'
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          secrets = [s for s in (os.environ.get('SA', ''), os.environ.get('PROJECT', '')) if s]
+          files = [pathlib.Path(p) for p in ('ftl.log', 'copy.log')] + \
+              [p for p in pathlib.Path('results').rglob('*') if p.suffix in ('.txt', '.xml', '.json', '.log', '')]
+          for p in files:
+              if p.is_file():
+                  t = p.read_bytes()
+                  for s in secrets:
+                      t = t.replace(s.encode(), b'<redacted>')
+                  p.write_bytes(t)
+          PY
+
+      - name: Upload results
+        if: always() && steps.ftl.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: devicelab-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: |
+            results/
+            robo.json
+            ftl.log
+            copy.log
+          retention-days: 14
+          if-no-files-found: ignore

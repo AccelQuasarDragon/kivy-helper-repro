@@ -1,0 +1,39 @@
+# fake_pioneer.diff: one fake Pioneer player at 127.0.0.1 instead of SSDP discovery (CI emulator).
+# Upstream: yabb85/controlP commit cad5d5c626516dcbf18719194c92e63f06128d62 (branch dev). App dir src/.
+# Used by build.yml input `patches` (git apply --verbose in the fetched repo root, before the spec).
+# git apply ignores this text before the first "diff --git" line.
+# What it does:
+# - scan() in src/controlp/pioneer/upnp.py skips the SSDP multicast search (an emulator has no LAN).
+# - It uses one fixed description URL instead: http://127.0.0.1:18080/description.xml.
+# - Everything after that is their real code: requests + lxml parse the description, api.py talks TCP.
+# - It logs STUB fake_pioneer scan / devices lines (logcat tag python).
+# Needs on the runner: inspect.yml sidecar=tools/fakes/pioneer.py and adb_reverse=8102;18080.
+# Without the fake running, scan() finds no device and the app stays on Home.
+# Do NOT combine with demo_device.diff (same function).
+
+diff --git a/src/controlp/pioneer/upnp.py b/src/controlp/pioneer/upnp.py
+index 05e8624..7067efd 100644
+--- a/src/controlp/pioneer/upnp.py
++++ b/src/controlp/pioneer/upnp.py
+@@ -79,11 +79,19 @@ def ssdp_pioneer_device(urls: set) -> dict:
+     return devices
+ 
+ 
++# fake device: no SSDP multicast (an emulator cannot reach a LAN); the one device description is
++# fetched over HTTP from 127.0.0.1, which adb reverse forwards to the fake on the CI runner.
++FAKE_LOCATION = 'http://127.0.0.1:18080/description.xml'
++
++
+ def scan():
+     req = ssdp_request(ST_ROOTDEVICE)
+     try:
+-        urls = ssdp_scan(req)
++        urls = {FAKE_LOCATION}  # was: ssdp_scan(req)
++        print('STUB fake_pioneer scan', sorted(urls))
+         devices = ssdp_pioneer_device(urls)
+-    except OSError:
++    except OSError as err:
++        print('STUB fake_pioneer scan failed', repr(err))
+         devices = []
++    print('STUB fake_pioneer devices', devices)
+     return devices
