@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44208784535",
+ "inputs": {
+  "label": "controlP OD gate 2 reach other_devices (T1 build, pixel_5 API 30) from matrix run 44185768900",
+  "apk_url": "",
+  "artifact_run": "44185768900",
+  "artifact_name": "build-5-T1-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "30",
+  "profile": "pixel_5",
+  "taps": "540,2000,5;540,600,8;996,2139,8;540,1800,3",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
