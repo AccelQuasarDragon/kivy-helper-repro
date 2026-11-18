@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Publish the files of SRC_DIR to shots/<DEST>/ on the orphan branch `shots` (served by GitHub Pages).
 # Shared by inspect.yml (shots job: DEST = <run_id>) and report.yml (publish job: DEST = <slug>).
-# usage: push_shots.sh SRC_DIR DEST [overwrite|no-overwrite]
+# usage: push_shots.sh SRC_DIR DEST [overwrite|no-overwrite|check]
+#   check = only fetch the branch tip and exit 3 if shots/<DEST> exists, else 0 (nothing pushed; report.yml
+#           runs it before pushing phone media, so an existing slug is refused before anything is written)
 # env: TOKEN (the job's GITHUB_TOKEN, contents: write), GITHUB_REPOSITORY;
 #      SHOTS_REMOTE (optional: another remote URL / path, for local tests)
-# exit 0 = pushed; 3 = DEST exists and no-overwrite; 1 = gave up after all attempts.
+# exit 0 = pushed (check: DEST is free); 3 = DEST exists and no-overwrite / check; 1 = gave up after all attempts.
 #
 # Race-safe by construction: many runs may finish together (5 gate runs raced on 2026-11-15:
 # "rejected (fetch first)" then "cannot lock ref"). Each attempt starts from a FRESH fetch of the
@@ -14,6 +16,7 @@
 # older pending ones, which would silently drop a run's shots.
 set -u
 src=$1; dest=$2; mode=${3:-overwrite}
+case "$mode" in overwrite|no-overwrite|check) ;; *) echo "::error::push_shots: bad mode '$mode'"; exit 1 ;; esac
 [[ "$dest" =~ ^[A-Za-z0-9-]{1,64}$ ]] || { echo "::error::push_shots: bad DEST '$dest'"; exit 1; }
 [ -d "$src" ] || { echo "::error::push_shots: no dir $src"; exit 1; }
 src=$(cd "$src" && pwd)
@@ -36,10 +39,11 @@ for i in $(seq 1 "$attempts"); do
     printf '# shots\nScreenshots + card pages pushed by inspect.yml / report.yml runs (shots/<id>/). Orphan branch: no code.\n' > README.md
     git add README.md
   fi
-  if [ "$mode" = no-overwrite ] && [ -e "shots/$dest" ]; then
+  if [ "$mode" != overwrite ] && [ -e "shots/$dest" ]; then
     echo "::error::shots/$dest already exists on branch shots (set overwrite to replace it)"
     exit 3
   fi
+  if [ "$mode" = check ]; then echo "shots/$dest is free"; exit 0; fi
   # Pages serves the branch as-is (no Jekyll build) when .nojekyll exists at its root
   [ -f .nojekyll ] || { : > .nojekyll; git add .nojekyll; }
   rm -rf "shots/$dest"

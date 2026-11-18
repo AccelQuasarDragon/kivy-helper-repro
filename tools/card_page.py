@@ -10,6 +10,9 @@ One spec, several views (docs/cards.md):
 
 Every HTML text value is html.escape'd (quote=True); every markdown text value goes through md()
 (markdown + HTML escaped, autolinks defused); every URL must be https on an allowed host.
+Code (summary `code`, section `diagram`) is never free text: it sits escaped in <pre> / in a fence.
+Every page carries a Content-Security-Policy meta: no script at all, or (a page with a diagram) only
+the pinned, SRI-checked Mermaid file + its inline init (MERMAID_* below).
 The og:description is cut to 200 chars (Discord truncates longer ones anyway); over 180 chars
 prints a `warning:` line (report.yml copies it to its summary).
 
@@ -20,21 +23,41 @@ CLI (any card, incl. a report) from a JSON spec:
   card_page.py OUT.html --spec card.json [--allow-host HOST ...]
       [--repo OWNER/NAME --slug SLUG [--shots-root DIR] [--md TESTS.md] [--sheet-manifest M.json]
        [--embed-manifest E.json]]
-  card_page.py --spec card.json --run-ids      (validate only; print the runs' ids, one per line)
+  card_page.py --spec card.json --run-ids [--media-plan P.json]
+      (validate only; print the runs' ids, one per line; P.json = the cleared phone media plan)
   spec = {"title", "description", "image", "url",
+          "summary": {"bug": "...", "fix": "...", "code": "multi-line code example", "lang": "python",
+                      "proof": "lead-in text", "proof_runs": [123, ...], "proof_links": [[text, url], ...]},
           "key_points": ["most important fact", ...],
-          "sections": [{"heading", "text", "image", "images": [...], "links": [[text, url], ...],
-                        "page": url}],
+          "sections": [{"heading", "text", "diagram": "flowchart TD ...", "image", "images": [...],
+                        "links": [[text, url], ...], "page": url}],
           "runs": [{"id": 123, "label", "question", "result", "cache": "cold|warm|apk",
                     "status": "proven|inferred", "images": ["launch.png", ...],
                     "settings": "short text", "recreate": {"input": "value", ...},
-                    "workflow": "inspect.yml|build.yml (the form `recreate` fills; default inspect.yml)"}],
+                    "workflow": "inspect.yml|build.yml (the form `recreate` fills; default inspect.yml)",
+                    "media": {"cleared": true, "artifact": "devicelab-10-a1", "digest": "sha256:<64 hex>",
+                              "images": "all" | ["3.png", ...], "video": true, "frames": 8, "replace": false}}],
           "embed": [{"run": 123, "image": "00_launch.png", "caption": "..."}]}
+  summary = the author's 3 bullets ABOVE the title: (1) bug, (2) fix + code example (escaped <pre>, a
+    fence in TESTS.md), (3) proof = links to runs (proof_runs: ids from `runs`) and/or allowlisted URLs;
+    bug, fix and at least one proof link required. key_points stay right under the title.
+  diagram = a Mermaid flowchart (validate_diagram: first line flowchart|graph + direction; no click / href /
+    call, URLs, script: / data: URLs, HTML tags except <br/>, %%{ directives, backticks, @{, url(, &#;
+    <= DIAGRAM_MAX chars): index.html renders it with the pinned Mermaid (strict), TESTS.md as a fence.
+  media = devicelab.yml (phone) runs only: report.yml's media job copies the run's screenshots / video /
+    frames into shots/<id>/ (tools/devicelab_media.py) ONLY when "cleared" is literally true (the operator
+    looked at every image and the video first) and from exactly the named `artifact` whose zip matches
+    `digest` (the bytes that were eye-checked); any other media value refuses the spec. An already
+    published shots/<id>/ is kept (the report uses it) unless "replace": true. A folder with
+    devicelab.json shows ALL its screenshots, a frame strip, the video and run facts; its PNGs work in
+    `images` and `embed` like any run's. Later reports reuse a published folder without `media`.
   With --repo/--slug, "url" = the Pages page of shots/<slug>/ and run URLs are built from the ids.
   --shots-root = a checkout of branch `shots`: each run's PNGs are picked from DIR/shots/<id>/
   (its `images`, else the first PER_RUN_DEFAULT; at most SHEET_MAX tiles in all); when any PNG is
   picked, og:image = shots/<slug>/sheet.png (render it from --sheet-manifest). Each run's
   DIR/shots/<id>/inputs.json (written by inspect.yml's shots job) gives its settings + recreate steps.
+  A run's card page (shots/<id>/) is linked ONLY when DIR/shots/<id>/index.html exists (no dead links;
+  without --shots-root nothing is linked).
   With `embed` and --embed-manifest: og:image = shots/<slug>/embed.png instead (a highlights sheet,
   contact_sheet.py --groups E.json --height 900 --font-size 36); the full sheet stays on the page.
 Locally: uv run --no-project tools/card_page.py ...
@@ -42,6 +65,8 @@ Exit codes: 0 written, 2 bad input (bad URL, malformed spec, missing key); argpa
 Pass free text in the `=` form (--title="$LABEL") so a value like `--help` is not read as an option.
 """
 import argparse
+import base64
+import hashlib
 import html
 import json
 import os
@@ -70,6 +95,44 @@ WORKFLOW = re.compile(r'[a-z][a-z0-9_-]{0,40}\.yml')
 WORKFLOWS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, '.github', 'workflows')
 RECREATE_WORKFLOWS = ('inspect.yml', 'build.yml')  # workflows whose form a recreate section can fill
 _FORMS = {}
+# Mermaid diagrams (section `diagram`): index.html loads ONE pinned file from jsdelivr with its SRI hash
+# (sha384 of the exact file, identical on unpkg; checked 2026-11-18: a self-contained IIFE, no dynamic
+# import, no eval / new Function) and renders with securityLevel 'strict'; a CSP meta allows only that
+# file + the inline init (by hash). TESTS.md uses a ```mermaid fence (GitHub renders it, sandboxed).
+MERMAID_VERSION = '12.2.0'
+MERMAID_URL = f'https://cdn.jsdelivr.net/npm/mermaid@{MERMAID_VERSION}/dist/mermaid.min.js'
+MERMAID_SRI = 'sha384-8xUhuLNMjW/cI2Dacg3DR4WliYznvIg0LVG1stctThKD/YVrJFI9TNCFxft5NYgp'
+MERMAID_INIT = "mermaid.initialize({startOnLoad:true,securityLevel:'strict',theme:'dark'});"
+DIAGRAM_MAX, DIAGRAM_LINES = 6000, 200
+DIAGRAM_FIRST = re.compile(r'(flowchart|graph)[ \t]+(TD|TB|BT|LR|RL)[ \t]*')
+DIAGRAM_STYLE = re.compile(r'\s*(classDef|style|linkStyle)\s')
+DIAGRAM_HEX = re.compile(r'#[0-9A-Fa-f]{3,8}(?![0-9A-Za-z_])')
+DIAGRAM_BR = re.compile(r'(?i)<br[ \t]*/?>')  # the ONE tag allowed (line break in a label)
+DIAGRAM_BAD = [  # (pattern, reason): anything that could link, run code, fetch or reconfigure
+    (re.compile(r'(?i)\b(click|href|call)\b'), 'click / href / call (links and callbacks)'),
+    (re.compile(r'%%\{'), '%%{ init directive (config override)'),
+    (re.compile(r'(?i)(java|vb)script\s*:'), 'script: URL'),
+    (re.compile(r'(?i)\bdata\s*:\s*[a-z]+/'), 'data: URL'),
+    (re.compile(r'(?i)[a-z][a-z0-9+.-]*://|\bwww\.'), 'URL'),
+    (re.compile(r'<[A-Za-z/!?]'), 'HTML tag (only <br/> is allowed)'),
+    (re.compile(r'`'), 'backtick (markdown strings)'),
+    (re.compile(r'@\{'), '@{ node shape / image syntax'),
+    (re.compile(r'(?i)url\s*\('), 'url( in a style'),
+    (re.compile(r'&#|\\u'), r'encoded character (&# or \u)'),
+    (re.compile(r'#\w+;'), 'Mermaid entity code (#name; / #123;)'),
+    (re.compile(r'//'), 'protocol-relative URL (//host)'),
+    (re.compile(r'[\x00-\x08\x0b-\x1f\x7f]'), 'control character'),
+]
+# report summary (spec `summary`, rendered ABOVE the title): bug, fix + code example, proof links
+SUMMARY_TEXT, SUMMARY_CODE, SUMMARY_LINKS = 600, 3000, 8
+CODE_LANG = re.compile(r'[a-z0-9]{1,15}')
+# devicelab media (run `media`, copied into shots/<id>/ by tools/devicelab_media.py; read back from
+# shots/<id>/devicelab.json). Publishing images / video is an explicit per-run opt-in: cleared = true.
+MEDIA_IMAGES_MAX, MEDIA_FRAMES_MAX, MEDIA_FRAMES_DEFAULT = 40, 12, 8
+VIDEO_NAME = 'video.mp4'
+MEDIA_ARTIFACT = re.compile(r'devicelab-[0-9]{1,10}-a[0-9]{1,4}')
+MEDIA_DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
+FACT = re.compile(r"[A-Za-z0-9 ,.()_:'/-]{0,80}")
 
 
 def workflow_form(wf: str) -> tuple:
@@ -187,6 +250,110 @@ def _inputs(v, name: str, truncate: bool = False) -> dict:
     return out
 
 
+def validate_diagram(text, name: str = 'diagram') -> str:
+    """A Mermaid flowchart source -> itself, or ValueError. Only `flowchart` / `graph` diagrams; nothing
+    that can link (click / href / call, URLs), run or reference code (script: / data: URLs, HTML tags
+    except <br/>, encoded characters), reconfigure the renderer (%%{ init }%%) or fetch (url(, @{ img });
+    at most DIAGRAM_MAX chars / DIAGRAM_LINES lines. The renderers escape it too (HTML) or fence it (md)."""
+    if not isinstance(text, str):
+        raise ValueError(f'{name} must be text')
+    if len(text) > DIAGRAM_MAX or text.count('\n') >= DIAGRAM_LINES:
+        raise ValueError(f'{name}: at most {DIAGRAM_MAX} chars and {DIAGRAM_LINES} lines')
+    text = text.replace('\r\n', '\n').replace('\t', '  ')
+    lines = [x for x in text.split('\n') if x.strip()]
+    if not lines or not DIAGRAM_FIRST.fullmatch(lines[0].strip()):
+        raise ValueError(f'{name}: the first line must be "flowchart TD" / "graph LR" (TD TB BT LR RL)')
+    rest = DIAGRAM_BR.sub(' ', text)
+    # a hex colour (#888 / #2b6cb0) is CSS only on a style line; anywhere else `#...;` is an entity code
+    rest = '\n'.join(DIAGRAM_HEX.sub(' ', x) if DIAGRAM_STYLE.match(x) else x for x in rest.split('\n'))
+    for pat, why in DIAGRAM_BAD:
+        if pat.search(rest):
+            raise ValueError(f'{name}: not allowed: {why}')
+    return text.strip('\n')
+
+
+def validate_summary(card: dict, run_ids) -> dict | None:
+    """spec `summary` -> {bug, fix, code, lang, proof, proof_runs, proof_links} or None.
+    The author's top-of-report form: (1) the bug, (2) the fix with a code example, (3) the proof as
+    links to the run(s) (`proof_runs`: ids from `runs`; `proof_links`: [text, url] pairs, allowlisted
+    at render). bug, fix and at least one proof link are required."""
+    sm = card.get('summary')
+    if sm is None:
+        return None
+    if not isinstance(sm, dict):
+        raise ValueError('summary must be an object {bug, fix, code, lang, proof, proof_runs, proof_links}')
+    unknown = set(sm) - {'bug', 'fix', 'code', 'lang', 'proof', 'proof_runs', 'proof_links'}
+    if unknown:
+        raise ValueError(f'summary: unknown key(s) {", ".join(sorted(map(str, unknown)))}')
+    out = {k: _text(sm.get(k), f'summary {k}', SUMMARY_TEXT) for k in ('bug', 'fix', 'proof')}
+    if not out['bug'].strip() or not out['fix'].strip():
+        raise ValueError('summary needs bug and fix')
+    code = sm.get('code')
+    if code is not None and not isinstance(code, str):
+        raise ValueError('summary code must be text')
+    out['code'] = (code or '').replace('\r\n', '\n').strip('\n')
+    if len(out['code']) > SUMMARY_CODE:
+        raise ValueError(f'summary code is {len(out["code"])} chars (max {SUMMARY_CODE})')
+    out['lang'] = _text(sm.get('lang'), 'summary lang', 15)
+    if out['lang'] and not CODE_LANG.fullmatch(out['lang']):
+        raise ValueError('summary lang: a-z 0-9, up to 15 chars (e.g. python)')
+    pr = sm.get('proof_runs') or []
+    if not isinstance(pr, list) or len(pr) > SUMMARY_LINKS:
+        raise ValueError(f'summary proof_runs must be a list of at most {SUMMARY_LINKS} run ids')
+    out['proof_runs'] = []
+    for x in pr:
+        if isinstance(x, bool) or str(x) not in run_ids:
+            raise ValueError(f'summary proof_runs: {x!r} is not in runs')
+        out['proof_runs'].append(str(x))
+    links = sm.get('proof_links') or []
+    if not isinstance(links, list) or len(links) > SUMMARY_LINKS or not all(
+            isinstance(li, (list, tuple)) and len(li) == 2 and all(isinstance(x, str) for x in li) for li in links):
+        raise ValueError(f'summary proof_links must be a list of at most {SUMMARY_LINKS} [text, url] pairs')
+    for t, _ in links:
+        _text(t, 'summary proof_links text', LABEL_MAX * 2)
+    out['proof_links'] = [list(li) for li in links]
+    if not out['proof_runs'] and not out['proof_links']:
+        raise ValueError('summary needs proof: at least one proof_runs id or proof_links pair')
+    return out
+
+
+def _media(v, rid: str) -> dict:
+    """run `media` -> {artifact, digest, images: 'all' | [names], video: bool, frames: int, replace: bool}.
+    Images / video cannot be scanned automatically, so `cleared` must be literally true: the operator looked
+    at every image and the video OF THAT ARTIFACT first, and `artifact` + `digest` (the artifacts API's
+    sha256 of its zip) pin exactly those bytes (docs/devicelab.md "Publishing phone media"). Anything else
+    refuses the report. `replace`: true = replace an already published shots/<id>/ (default: keep it)."""
+    if not isinstance(v, dict):
+        raise ValueError(f'run {rid} media must be an object {{cleared, artifact, digest, images, video, frames, replace}}')
+    unknown = set(v) - {'cleared', 'artifact', 'digest', 'images', 'video', 'frames', 'replace'}
+    if unknown:
+        raise ValueError(f'run {rid} media: unknown key(s) {", ".join(sorted(map(str, unknown)))}')
+    if v.get('cleared') is not True:
+        raise ValueError(f'run {rid} media: refused: "cleared": true is missing (look at every image and the video first)')
+    if not isinstance(v.get('artifact'), str) or not MEDIA_ARTIFACT.fullmatch(v['artifact']):
+        raise ValueError(f'run {rid} media: "artifact" must name the eye-checked artifact, e.g. "devicelab-10-a1"')
+    if not isinstance(v.get('digest'), str) or not MEDIA_DIGEST.fullmatch(v['digest']):
+        raise ValueError(f'run {rid} media: "digest" must be that artifact\'s digest from the artifacts API ("sha256:<64 hex>")')
+    if not isinstance(v.get('replace', False), bool):
+        raise ValueError(f'run {rid} media replace must be true or false')
+    imgs = v.get('images', 'all')
+    if imgs != 'all' and (not isinstance(imgs, list) or len(imgs) > MEDIA_IMAGES_MAX or
+                          not all(isinstance(i, str) and PNG.fullmatch(i) for i in imgs)):
+        raise ValueError(f'run {rid} media images: "all" or a list of at most {MEDIA_IMAGES_MAX} PNG names (e.g. "3.png")')
+    video = v.get('video', False)
+    if not isinstance(video, bool):
+        raise ValueError(f'run {rid} media video must be true or false')
+    frames = v.get('frames', MEDIA_FRAMES_DEFAULT if video else 0)
+    if isinstance(frames, bool) or not isinstance(frames, int) or not 0 <= frames <= MEDIA_FRAMES_MAX:
+        raise ValueError(f'run {rid} media frames: 0-{MEDIA_FRAMES_MAX}')
+    if frames and not video:
+        raise ValueError(f'run {rid} media frames need "video": true (frames are sampled from the video)')
+    if imgs != 'all' and not imgs and not video:
+        raise ValueError(f'run {rid} media: nothing to publish (no images, no video)')
+    return {'artifact': v['artifact'], 'digest': v['digest'], 'images': imgs if imgs == 'all' else list(dict.fromkeys(imgs)),
+            'video': video, 'frames': frames, 'replace': v.get('replace', False)}
+
+
 def validate_sections(card: dict) -> None:
     sections = card.get('sections') or []
     if not isinstance(sections, list) or len(sections) > SECTIONS_MAX:
@@ -200,6 +367,8 @@ def validate_sections(card: dict) -> None:
         _text(s.get('heading'), f'section {k} heading', 256)
         _text(s.get('text'), f'section {k} text', 4000)
         _str_list(s.get('images'), f'section {k} images', 40, 500)
+        if s.get('diagram') is not None:
+            validate_diagram(s['diagram'], f'section {k} diagram')
         links = s.get('links') or []
         if not isinstance(links, list) or len(links) > 40 or not all(
                 isinstance(li, (list, tuple)) and len(li) == 2 and all(isinstance(x, str) for x in li) for li in links):
@@ -244,6 +413,7 @@ def validate(card: dict) -> list:
             raise ValueError(f'run {rid} cache must be one of {", ".join(CACHES)}')
         if n['status'] and n['status'] not in STATUSES:
             raise ValueError(f'run {rid} status must be one of {", ".join(STATUSES)}')
+        n['media'] = _media(r['media'], rid) if r.get('media') is not None else None
         if r.get('images') is not None:
             imgs = r['images']
             if not isinstance(imgs, list) or len(imgs) > IMAGES_MAX or \
@@ -262,19 +432,37 @@ def validate(card: dict) -> list:
         if not isinstance(e.get('image'), str) or not PNG.fullmatch(e['image']):
             raise ValueError(f'embed image must be a PNG file name: {e.get("image")!r}')
         _text(e.get('caption'), 'embed caption', CAPTION_MAX)
+    validate_summary(card, seen)
     return out
+
+
+def media_plan(runs: list, shots_root=None) -> tuple:
+    """(plan, kept): plan = [{id, artifact, digest, images, video, frames, replace}] of the runs with cleared
+    `media` (report.yml's media job input); kept = the ids left out because shots_root/shots/<id>/devicelab.json
+    is already published and `replace` is not true (the report then shows the published files: a later,
+    smaller media set never silently deletes an earlier report's video / PNGs)."""
+    plan, kept = [], []
+    for r in runs:
+        if not r.get('media'):
+            continue
+        if shots_root and not r['media']['replace'] and \
+                os.path.isfile(os.path.join(shots_root, 'shots', r['id'], 'devicelab.json')):
+            kept.append(r['id'])
+        else:
+            plan.append(dict(r['media'], id=r['id']))
+    return plan, kept
 
 
 def pick_images(runs: list, shots_root: str) -> None:
     """Set run['picked'] = the PNG names of shots_root/shots/<id>/ that go on the sheet and pages:
     a run's listed `images` (each must exist), else up to PER_RUN_DEFAULT of its sorted PNGs
-    (sheet.png excluded), handed out round-robin so every run gets one before any gets more;
-    at most SHEET_MAX in all."""
+    (sheet.png and strip.png excluded; numbers in names sort as numbers: 2.png before 10.png), handed
+    out round-robin so every run gets one before any gets more; at most SHEET_MAX in all."""
     avail = {}
     for r in runs:
         d = os.path.join(shots_root, 'shots', r['id'])
-        names = sorted(f for f in os.listdir(d) if PNG.fullmatch(f) and f != 'sheet.png') \
-            if os.path.isdir(d) else []
+        names = sorted((f for f in os.listdir(d) if PNG.fullmatch(f) and f not in ('sheet.png', 'strip.png')),
+                       key=natural) if os.path.isdir(d) else []
         avail[r['id']] = names
         if r['images'] is not None:
             missing = [i for i in r['images'] if i not in names]
@@ -290,6 +478,92 @@ def pick_images(runs: list, shots_root: str) -> None:
             if budget and k < len(avail[r['id']]):
                 r['picked'].append(avail[r['id']][k])
                 budget -= 1
+
+
+def natural(name: str) -> list:
+    """Sort key: digit runs compare as numbers (Test Lab names its screenshots 0.png ... 16.png)."""
+    return [(0, int(t), '') if t.isdigit() else (1, 0, t) for t in re.split(r'(\d+)', name) if t]
+
+
+PHONE_FACTS = {  # devicelab.json `facts` key -> (kind, label); kind int / num / text (FACT charset)
+    'device': ('text', 'device'), 'outcome': ('text', 'Test Lab outcome'), 'details': ('text', 'details'),
+    'test_time_s': ('int', 'test time (s)'), 'screenshots': ('int', 'screenshots in the artifact'),
+    'video_s': ('num', 'video (s)'), 'crash_files': ('int', 'crash report files'), 'taps': ('int', 'scripted taps')}
+
+
+def load_folders(runs: list, shots_root) -> None:
+    """Per run, from shots_root/shots/<id>/ (a checkout of branch shots; absent = nothing):
+    run['has_page'] = its index.html exists (a run card page: only then is it linked, no dead links);
+    run['phone'] = its devicelab.json (written by tools/devicelab_media.py for cleared phone media):
+    {images, frames, video, strip, sheet, facts, notes}, every name checked and present in the folder."""
+    for r in runs:
+        r['has_page'], r['phone'] = False, None
+        if not shots_root:
+            continue
+        d = os.path.join(shots_root, 'shots', r['id'])
+        r['has_page'] = os.path.isfile(os.path.join(d, 'index.html'))
+        path = os.path.join(d, 'devicelab.json')
+        if not os.path.isfile(path):
+            continue
+        with open(path, encoding='utf-8') as f:
+            rec = json.load(f)
+        where = f'shots/{r["id"]}/devicelab.json'
+        if not isinstance(rec, dict) or rec.get('workflow') != 'devicelab.yml' or str(rec.get('run_id')) != r['id']:
+            raise ValueError(f'{where}: want {{"workflow": "devicelab.yml", "run_id": "{r["id"]}", ...}}')
+
+        def names(key, n):
+            v = rec.get(key) or []
+            if not isinstance(v, list) or len(v) > n or not all(isinstance(x, str) and PNG.fullmatch(x) for x in v):
+                raise ValueError(f'{where}: {key} must be a list of at most {n} PNG names')
+            return v
+
+        def one(key, want):
+            v = rec.get(key)
+            if v is None:
+                return None
+            if not isinstance(v, str) or not want(v):
+                raise ValueError(f'{where}: bad {key}: {v!r}')
+            return v
+        ph = {'images': names('images', MEDIA_IMAGES_MAX), 'frames': names('frames', MEDIA_FRAMES_MAX),
+              'video': one('video', lambda v: v == VIDEO_NAME), 'strip': one('strip', lambda v: v == 'strip.png'),
+              'sheet': one('sheet', lambda v: v == 'sheet.png'), 'facts': {},
+              'notes': _str_list(rec.get('notes'), f'{where} notes', 10, 200)}
+        for x in ph['images'] + ph['frames'] + [ph[k] for k in ('video', 'strip', 'sheet') if ph[k]]:
+            if not os.path.isfile(os.path.join(d, x)):
+                raise ValueError(f'{where}: lists {x}, which is not in the folder')
+        facts = rec.get('facts') or {}
+        if not isinstance(facts, dict):
+            raise ValueError(f'{where}: facts must be an object')
+        for k, v in facts.items():
+            kind = PHONE_FACTS.get(k, (None,))[0]
+            ok = (kind == 'text' and isinstance(v, str) and FACT.fullmatch(v)) or \
+                 (kind == 'int' and isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10 ** 6) or \
+                 (kind == 'num' and isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v < 10 ** 6)
+            if not ok:
+                raise ValueError(f'{where}: bad fact {k!r}')
+            ph['facts'][k] = v
+        r['phone'] = ph
+
+
+def phone_line(r: dict) -> str:
+    """One plain line of a phone run's facts (from devicelab.json), '' when none."""
+    f = (r.get('phone') or {}).get('facts') or {}
+    parts = []
+    if f.get('device'):
+        parts.append(f'device {f["device"]}')
+    if f.get('outcome'):
+        parts.append(f'Test Lab outcome {f["outcome"]}' + (f' ({f["details"]})' if re.search('[A-Za-z]', f.get('details') or '') else ''))
+    if 'test_time_s' in f:
+        parts.append(f'test time {f["test_time_s"]} s')
+    if 'screenshots' in f:
+        parts.append(f'{f["screenshots"]} screenshot(s)')
+    if 'video_s' in f:
+        parts.append(f'video {round(f["video_s"])} s')
+    if 'crash_files' in f:
+        parts.append(f'{f["crash_files"]} crash report file(s)')
+    if 'taps' in f:
+        parts.append(f'{f["taps"]} scripted tap(s)')
+    return ('Phone run (Firebase Test Lab): ' + ' · '.join(parts)) if parts else ''
 
 
 def load_inputs(runs: list, shots_root) -> None:
@@ -424,12 +698,27 @@ class Ctx:
     def png(self, rid, name):
         return f'{self.raw}/{rid}/{name}'
 
+    def pages_file(self, rid, name):
+        return f'{self.pages}/{rid}/{name}'
+
+
+def summary_view(card: dict, runs: list, ctx) -> dict | None:
+    """spec `summary` -> {bug, fix, code, lang, proof, links: [(text, url or None)]}; a proof run links
+    to its run page on GitHub (no --repo: its label only, no URL)."""
+    sm = validate_summary(card, {r['id'] for r in runs})
+    if not sm:
+        return None
+    by_id = {r['id']: r for r in runs}
+    links = [(f'{by_id[rid]["label"]} (run {rid})', ctx.run_url(rid) if ctx else None) for rid in sm['proof_runs']]
+    links += [(t, u) for t, u in sm['proof_links']]
+    return dict(sm, links=links)
+
 
 def run_lines(r: dict) -> list:
     """Plain-text lines for a run, one idea per line (escaped by each renderer)."""
     tags = ' · '.join(t.upper() if t in CACHES else t for t in (r['cache'], r['status']) if t)
     lines = [f'Question: {r["question"]}' if r['question'] else '', f'Result: {r["result"]}' if r['result'] else '',
-             f'Evidence: {tags}' if tags else '', f'Settings: {settings_text(r)}']
+             f'Evidence: {tags}' if tags else '', f'Settings: {settings_text(r)}', phone_line(r)]
     return [x for x in lines if x]
 
 
@@ -457,13 +746,27 @@ def expand(card: dict, runs: list, ctx, embed=False) -> dict:
         if embed:
             card['sheet_image'] = card.get('image')
             card['image'] = ctx.embed
+    card['summary_view'] = summary_view(card, runs, ctx)
     sections = list(card.get('sections') or [])
     for r in runs:
-        s = {'heading': r['label'], 'lines': run_lines(r), 'anchor_links': [('how to recreate', anchor(r))]}
+        s = {'heading': r['label'], 'id': f'run-{r["id"]}', 'lines': run_lines(r),
+             'anchor_links': [('how to recreate', anchor(r))]}
         if ctx:
-            s['page'] = ctx.run_page(r['id'])
-            s['images'] = [ctx.png(r['id'], i) for i in r.get('picked') or []]
-            s['links'] = [['run', ctx.run_url(r['id'])], ['run card', ctx.run_page(r['id'])]]
+            ph = r.get('phone')
+            # a run card page only when shots/<id>/index.html exists (devicelab runs have none: no dead link)
+            if r.get('has_page'):
+                s['page'] = ctx.run_page(r['id'])
+            # a phone run shows ALL its published screenshots; other runs their picked ones
+            shown = ph['images'] if ph else (r.get('picked') or [])
+            s['images'] = [ctx.png(r['id'], i) for i in shown]
+            s['links'] = [['run', ctx.run_url(r['id'])]] + ([['run card', ctx.run_page(r['id'])]] if r.get('has_page') else [])
+            if ph:
+                if ph['strip']:
+                    s['strip'] = ctx.png(r['id'], ph['strip'])
+                if ph['video']:
+                    s['video'] = ctx.pages_file(r['id'], ph['video'])
+                    s['links'].append(['video (mp4)', s['video']])
+                s['lines'] += [f'Note: {n}' for n in ph['notes']]
         sections.append(s)
     if runs:
         sections.append({'heading': 'How to recreate', 'id': 'how-to-recreate',
@@ -478,8 +781,9 @@ ANCHOR = re.compile(r'[a-z0-9-]{1,80}')
 
 def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
     """card -> HTML string. card keys: title, description, url, image (optional if a section
-    has one), key_points, sheet_image, sections: [{heading, text, lines, image, images, links,
-    anchor_links, steps, pre, page, id}] (all optional)."""
+    has one), key_points, sheet_image, summary_view (above the title), sections: [{heading, text,
+    diagram, lines, image, images, strip, video, links, anchor_links, steps, pre, page, id}] (all optional).
+    A CSP meta allows no script at all, or (a page with a diagram) only the pinned Mermaid file + its init."""
     hosts = tuple(h.lower() for h in hosts)
     e = lambda s: html.escape(str(s), quote=True)  # noqa: E731
     u = lambda s: e(check_url(s, hosts))  # noqa: E731
@@ -507,7 +811,9 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
         ('name', 'theme-color', THEME),
         ('name', 'description', e(desc)),
     ]
+    diagrams = [validate_diagram(s['diagram'], 'diagram') for s in sections if s.get('diagram') is not None]
     out = ['<!doctype html>', '<html lang="en">', '<head>', '<meta charset="utf-8">',
+           f'<meta http-equiv="Content-Security-Policy" content="{e(csp(bool(diagrams), hosts))}">',
            '<meta name="viewport" content="width=device-width, initial-scale=1">',
            f'<title>{e(title)}</title>']
     out += [f'<meta {k}="{n}" content="{v}">' for k, n, v in meta]
@@ -515,8 +821,20 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
             'padding:16px;background:#111;color:#eee}a{color:#8cf}img{max-width:100%;height:auto;'
             'display:block;margin:8px 0}section{border-top:1px solid #444;margin-top:24px}'
             'p{margin:4px 0}pre{background:#222;padding:8px;overflow-x:auto;white-space:pre-wrap}'
-            '.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}</style>',
-            '</head>', '<body>', f'<h1>{e(title)}</h1>']
+            '.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}'
+            'video{max-width:100%;width:360px;display:block;margin:8px 0}'
+            '.summary{background:#1b2533;border:1px solid #2b6cb0;padding:8px 8px 8px 32px}'
+            '.summary pre{background:#0b0f14}</style>',
+            '</head>', '<body>']
+    sv = card.get('summary_view')
+    if sv:  # the author's three top bullets, ABOVE the title: bug, fix (+ code), proof links
+        proof = ' · '.join(f'<a href="{u(href)}">{e(text)}</a>' if href else e(text) for text, href in sv['links'])
+        code = f'<pre><code>{e(sv["code"])}</code></pre>' if sv['code'] else ''
+        out.append('<ol class="summary">'
+                   f'<li><strong>Bug:</strong> {e(sv["bug"])}</li>'
+                   f'<li><strong>Fix:</strong> {e(sv["fix"])}{code}</li>'
+                   f'<li><strong>Proof:</strong> {e(sv["proof"]) + " " if sv["proof"] else ""}{proof}</li></ol>')
+    out.append(f'<h1>{e(title)}</h1>')
     if card.get('key_points'):
         out.append('<ul class="key">' + ''.join(f'<li>{e(k)}</li>' for k in card['key_points']) + '</ul>')
     if card.get('description'):
@@ -535,6 +853,8 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
             out.append(f'<h2><a href="{u(s["page"])}">{h}</a></h2>' if s.get('page') else f'<h2>{h}</h2>')
         if s.get('text'):
             out.append(f'<p>{e(s["text"])}</p>')
+        if s.get('diagram') is not None:  # mermaid reads the element's text: escaped here, inert as HTML
+            out.append(f'<pre class="mermaid">{e(validate_diagram(s["diagram"], "diagram"))}</pre>')
         out += [f'<p>{e(line)}</p>' for line in s.get('lines') or []]
         if s.get('anchor_links'):
             out.append('<p>' + ' · '.join(f'<a href="#{a(t)}">{e(x)}</a>' for x, t in s['anchor_links']) + '</p>')
@@ -545,6 +865,11 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
             out.append(f'<pre>{e(s["pre"])}</pre>')
         if s.get('image') and s['image'] != card.get('image'):
             out.append(f'<a href="{u(s["image"])}"><img src="{u(s["image"])}" alt="contact sheet"></a>')
+        if s.get('strip'):
+            out += ['<p>Frames sampled from the video:</p>',
+                    f'<a href="{u(s["strip"])}"><img src="{u(s["strip"])}" alt="video frames" loading="lazy"></a>']
+        if s.get('video'):
+            out.append(f'<video controls preload="metadata" playsinline src="{u(s["video"])}"></video>')
         if s.get('images'):
             out.append('<div class="shots">')
             out += [f'<a href="{u(i)}"><img src="{u(i)}" alt="{e(i.rsplit("/", 1)[-1])}" loading="lazy"></a>'
@@ -555,8 +880,23 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
             out += [f'<li><a href="{u(href)}">{e(text)}</a></li>' for text, href in s['links']]
             out.append('</ul>')
         out.append('</section>')
+    if diagrams:
+        out += [f'<script src="{e(MERMAID_URL)}" integrity="{e(MERMAID_SRI)}" crossorigin="anonymous"></script>',
+                f'<script>{MERMAID_INIT}</script>']
     out += ['</body>', '</html>', '']
     return '\n'.join(out)
+
+
+def csp(scripts: bool, hosts=ALLOWED_HOSTS) -> str:
+    """Content-Security-Policy of a card page: images / video only from the allowlisted hosts that serve
+    files (raw.githubusercontent.com, the Pages host, any --allow-host; not github.com, whose image
+    links redirect elsewhere), our inline style; scripts = the pinned Mermaid file (SRI-checked too) +
+    the inline init, allowed by its sha256."""
+    init = base64.b64encode(hashlib.sha256(MERMAID_INIT.encode()).digest()).decode()
+    script = f"{MERMAID_URL} 'sha256-{init}'" if scripts else "'none'"
+    src = ' '.join(f'https://{h}' for h in dict.fromkeys(hosts) if h != 'github.com') or "'none'"
+    return (f"default-src 'none'; img-src {src}; media-src {src}; style-src 'unsafe-inline'; "
+            f"script-src {script}; base-uri 'none'; form-action 'none'")
 
 
 def fence(text: str) -> str:
@@ -585,7 +925,16 @@ def render_md(card: dict, runs: list, ctx, hosts=ALLOWED_HOSTS) -> str:
             raise ValueError(f'URL has characters markdown would misread: {href!r}')
         return href
     link = lambda text, href: f'[{md(text)}]({dest(href)})'  # noqa: E731
-    out = [f'# {md(card["title"], 256)}', '']
+    out = []
+    sv = summary_view(card, runs, ctx)
+    if sv:  # the author's three top bullets, ABOVE the title; the code sits in a fence (shown, never rendered)
+        proof = ' · '.join(link(t, h) if h else md(t) for t, h in sv['links'])
+        out += [f'1. **Bug:** {md(sv["bug"])}', f'2. **Fix:** {md(sv["fix"])}', '']
+        if sv['code']:
+            f = fence(sv['code'])
+            out += [f'   {f}{sv["lang"]}'] + [f'   {x}' if x else '' for x in sv['code'].split('\n')] + [f'   {f}', '']
+        out += [f'3. **Proof:** {md(sv["proof"]) + " " if sv["proof"] else ""}{proof}', '']
+    out += [f'# {md(card["title"], 256)}', '']
     if card.get('key_points'):
         out += [f'- {md(k)}' for k in card['key_points']] + ['']
     if card.get('description'):
@@ -602,19 +951,45 @@ def render_md(card: dict, runs: list, ctx, hosts=ALLOWED_HOSTS) -> str:
                 '|---|---|---|---|---|---|---|---|']
         for k, r in enumerate(runs, 1):
             if ctx:
-                cell = f'{link(r["label"], ctx.run_url(r["id"]))} ({link("card", ctx.run_page(r["id"]))})'
+                cell = link(r['label'], ctx.run_url(r['id']))
+                if r.get('has_page'):  # only an existing run card page is linked
+                    cell += f' ({link("card", ctx.run_page(r["id"]))})'
                 pngs = ' '.join(link(os.path.splitext(i)[0], ctx.png(r['id'], i)) for i in r.get('picked') or [])
+                if r.get('phone'):
+                    pngs = (pngs + ' · ' if pngs else '') + f'[phone media](#phone-run-{r["id"]})'
+
             else:
                 cell, pngs = f'{md(r["label"])} (run {r["id"]})', ''
             settings = f'{md(settings_text(r))} · [how to recreate](#{anchor(r)})'
             out.append(f'| {settings} | {k} | {cell} | {md(r["question"]) or " "} | {md(r["result"]) or " "} | '
                        f'{r["cache"] or " "} | {r["status"] or " "} | {pngs or "none"} |')
         out.append('')
+    phone = [r for r in runs if r.get('phone')] if ctx else []
+    if phone:
+        out += ['## Phone runs: video frames and screenshots', '',
+                'Firebase Test Lab runs on Google\'s lab phones. Every image and video here was looked at before publishing.', '']
+        for r in phone:
+            ph = r['phone']
+            out += [f'### Phone run {r["id"]}', '', f'{link(r["label"], ctx.run_url(r["id"]))}', '']
+            if phone_line(r):
+                out += [md(phone_line(r)), '']
+            out += [md(f'Note: {n}') + '\n' for n in ph['notes']]
+            if ph['strip']:
+                out += ['Frames sampled from the video:', '', f'![video frames]({dest(ctx.png(r["id"], ph["strip"]))})', '']
+            if ph['video']:
+                out += [f'Video: {link("video.mp4", ctx.pages_file(r["id"], ph["video"]))}', '']
+            if ph['sheet']:
+                out += ['All published screenshots:', '', f'![screenshots]({dest(ctx.png(r["id"], ph["sheet"]))})', '']
+            if ph['images']:
+                out += [' '.join(link(os.path.splitext(i)[0], ctx.png(r['id'], i)) for i in ph['images']), '']
     for s in card.get('sections') or []:
         if s.get('heading'):
             out += [f'## {link(s["heading"], s["page"]) if s.get("page") else md(s["heading"])}', '']
         if s.get('text'):
             out += [md(s['text']), '']
+        if s.get('diagram') is not None:  # GitHub renders the fence (its own sandbox); validated anyway
+            d = validate_diagram(s['diagram'], 'diagram')
+            out += [f'{fence(d)}mermaid', d, fence(d), '']
         items = ([link('contact sheet', s['image'])] if s.get('image') else []) + \
             [link(i.rsplit('/', 1)[-1], i) for i in s.get('images') or []] + \
             [link(text, href) for text, href in s.get('links') or []]
@@ -662,6 +1037,8 @@ def main() -> int:
     ap.add_argument('--sheet-manifest', help='also write the contact_sheet.py --groups manifest here')
     ap.add_argument('--embed-manifest', help='also write the highlights (embed.png) manifest here; og:image = embed.png')
     ap.add_argument('--run-ids', action='store_true', help='validate the spec, print run ids, write nothing')
+    ap.add_argument('--media-plan', help='with --run-ids: also write the cleared phone media plan (JSON list) here; '
+                    'with --shots-root, runs already published there (no "replace": true) are left out')
     a = ap.parse_args()
     hosts = ALLOWED_HOSTS + tuple(a.allow_host)
     if a.spec:
@@ -692,6 +1069,13 @@ def main() -> int:
     try:
         runs = validate(card) if a.spec else []
         if a.run_ids:
+            if a.media_plan:
+                plan, kept = media_plan(runs, a.shots_root)
+                with open(a.media_plan, 'w', encoding='utf-8', newline='\n') as f:
+                    json.dump(plan, f, indent=1)
+                for rid in kept:
+                    print(f'notice: run {rid}: media already published in shots/{rid}/: kept as it is '
+                          '(set "replace": true to replace it)', file=sys.stderr)
             print('\n'.join(r['id'] for r in runs))
             return 0
         ctx = Ctx(a.repo, a.slug) if (a.repo or a.slug) else None
@@ -699,6 +1083,7 @@ def main() -> int:
             hosts += (ctx.pages_host,) if ctx.pages_host not in hosts else ()
             if a.shots_root:
                 pick_images(runs, a.shots_root)
+                load_folders(runs, a.shots_root)
         elif a.shots_root or a.md or a.sheet_manifest or a.embed_manifest:
             raise ValueError('--shots-root, --md, --sheet-manifest and --embed-manifest need --repo and --slug')
         load_inputs(runs, a.shots_root)

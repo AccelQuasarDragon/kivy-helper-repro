@@ -117,6 +117,51 @@ Deleting the project deletes the service account, the pool, the APIs and the res
   left; fails closed: nothing uploaded). Screenshots and video are NOT scanned: read them by hand (or a reviewer) after each run.
 - FTL phones are Google's lab phones: their logcat has no data of yours or the reporter's.
 
+## Publishing phone media (report.yml, 2026-11-18)
+The devicelab artifact keeps everything as it is (screenshots, video, logcat). A report COPIES media out of it.
+Images and video cannot be scanned automatically, so publishing is an explicit per-run opt-in by the operator:
+1. Note the artifact's name + digest, then download exactly that artifact:
+   `gh api repos/AccelQuasarDragon/kivy-helper-repro/actions/runs/<run_id>/artifacts --jq '.artifacts[] | [.name, .digest] | @tsv'`
+   (take the `devicelab-<n>-a<k>` line, never `devicelab-apk-*`), then `gh run download <run_id> -n <name>`.
+2. Look at every screenshot and the whole video of THAT artifact.
+3. Only Google's lab phones: never a run on the author's or anyone's own phone.
+4. Nothing of a reporter's may be on screen: an app showing reporter data gets our own lookalike data instead (e.g. `demo_device.diff`).
+5. Anything found = stop, ping the author (phone); do not publish.
+6. Only then add to that run in the report spec:
+   `"media": {"cleared": true, "artifact": "devicelab-10-a1", "digest": "sha256:<64 hex>", "images": "all", "video": true}`.
+
+`media` keys: `cleared` (must be literally `true`; anything else refuses the whole report), `artifact` + `digest`
+(required: the artifact you looked at and its digest from step 1; the job downloads that artifact by id and refuses
+on a name or digest mismatch, so a re-run or a later attempt can never slip in other bytes), `images` (`"all"`,
+default, or a list of Test Lab's names like `["0.png", "3.png"]`, max 40), `video` (default false), `frames`
+(frames sampled from the video for the strip, 0-12, default 8 with video), `replace` (default false, below).
+
+Already published (`shots/<run_id>/devicelab.json` exists on branch shots): the run's `media` is skipped and the
+report shows the published files (a summary line says so), so a later report with fewer images never deletes an
+earlier report's video or PNGs. `"replace": true` replaces the folder with this artifact's media (every report that
+names a file no longer there then shows a broken image: check them first).
+
+What report.yml's `media` job does (the only job there with `actions: read`):
+- checks the id is a devicelab.yml run of this repo; finds the named artifact in that run (not expired, digest =
+  the spec's), downloads its zip by artifact id, checks the zip's sha256 = the digest and unzips it safely
+  (`devicelab_media.py --extract`: no absolute / `..` paths, no symlinks, size caps);
+- `tools/devicelab_media.py` copies ONLY `results/<device>/artifacts/<n>.png` and `results/<device>/video.mp4`:
+  never logcat, tombstones or any text file;
+- every PNG is rewritten with a chunk whitelist (text / XMP / EXIF / time / ICC profile chunks dropped);
+- the video is re-muxed by ffmpeg: metadata and every non-video stream dropped; over 50 MB = not published (a note);
+- writes `frame_NN.png` + `strip.png` (the frames in one row), `sheet.png` (the screenshots) and `devicelab.json`
+  (file list + facts: device, Test Lab outcome + details, test time, counts; parsed from the redacted, scanned artifact);
+- `devicelab.json` gets the same two scans as devicelab.yml's uploads (privacy_check + ftl_redact --check).
+The publish job first refuses an existing slug (no overwrite) before pushing anything, then pushes each phone run's
+folder `shots/<run_id>/` (re-pushing the same files is a no-op), then the report LAST: a failed media push leaves no
+report behind, and "Re-run failed jobs" finishes the publish.
+Artifacts expire after 14 days; a published folder stays, and later reports show it without `media`.
+
+Performance metrics (CPU / memory / network) are NOT in the artifact: the results bucket holds none (copy.log of
+the 2026-11-17 runs lists only screenshots, video, logcat, crash files, actions / crawl JSON). Test Lab keeps them in
+its Tool Results API (gcloud's `--performance-metrics`, on by default per its docs; not checked in our logs). Getting
+them needs an API call in devicelab.yml's login job: not built yet.
+
 ## Design decisions (dated)
 - 2026-11-16: author approved (AskUserQuestion: "yes but i need to investigate first + i want what's free"):
   free tier only, inert until set up, `id-token: write` only on the login job, WIF instead of a JSON key.

@@ -126,3 +126,44 @@ that matter. The full `sheet.png` stays on the page and in TESTS.md.
 Warnings: an og:description over 180 chars prints `warning: ...` (card_page.py); report.yml copies it into its
 summary as a "card warning" line. It is not a failure (Discord just cuts the text).
 Generated run text on index.html is one line per idea (Question / Result / Evidence / Settings).
+
+## Report additions (PR 5, 2026-11-18)
+All optional spec keys; card_page.py's docstring has the exact shapes.
+
+Top bullets (`summary`): the author's three items, rendered ABOVE the title (index.html and TESTS.md):
+1. `bug`: what breaks.
+2. `fix` + `code` (+ `lang`, e.g. `python`): the change, with a code example.
+3. `proof` (lead-in text) + `proof_runs` (ids from `runs`: each links its GitHub run page) and/or `proof_links`
+   (`[text, url]`, allowlisted hosts only).
+
+`bug`, `fix` and at least one proof link are required. The code is shown as code: escaped inside `<pre>` on
+index.html, a fence (longer than any backtick run in it) in TESTS.md. It is never rendered as HTML or markdown.
+`key_points` stay where they were (right under the title).
+
+Diagrams (section `diagram`): a Mermaid flowchart, e.g. `"diagram": "flowchart TD\n  A --> B"`.
+- The first line must be `flowchart` or `graph` plus a direction (TD TB BT LR RL).
+- Refused: `click` / `href` / `call`, any URL or `www.`, `javascript:` / `vbscript:` / `data:` URLs, HTML tags
+  (only `<br/>` is allowed, for line breaks in labels), `%%{` init directives, front matter, backticks
+  (markdown strings), `@{` (node shapes / images), `url(`, `&#` entities, Mermaid entity codes (`#name;`, `#60;`),
+  protocol-relative `//host`, control characters; over 6000 chars or 200 lines. Hex colours (`#888`) are fine on
+  `classDef` / `style` / `linkStyle` lines only.
+- TESTS.md: a ```` ```mermaid ```` fence (GitHub renders it in its own sandbox).
+- index.html: the escaped source in `<pre class="mermaid">`, drawn by Mermaid 12.2.0 from jsdelivr, pinned to the
+  exact file by its SRI hash (sha384; the same bytes on unpkg), `securityLevel: 'strict'`.
+- Why the browser script and not an SVG rendered in the workflow: no Chromium / Node in the render job (nothing new
+  that can break a report run), and it could be tested here in a real headless browser. A page-wide CSP limits the risk:
+- Every card page now has a Content-Security-Policy meta: `script-src 'none'`, or (only on a page with a diagram)
+  exactly that one Mermaid file + the inline init by its sha256. Images / video: only from `raw.githubusercontent.com`
+  and the Pages host (plus any `--allow-host`; not `github.com`, whose image links redirect elsewhere). An injected inline
+  script or `onerror` handler does not run (checked in headless Chrome, 2026-11-18).
+- Upgrading Mermaid = new `MERMAID_VERSION` + `MERMAID_SRI` in card_page.py (sha384 of the exact file, from two CDNs).
+
+Run card links: a run's own card page (`shots/<id>/`) is linked only when `shots/<id>/index.html` exists in the
+`shots` checkout. devicelab runs have no card page, so their heading and table row link only the GitHub run (no dead link).
+
+Phone runs (devicelab.yml): their screenshots, video and a frame strip go on the report with the run `media` key
+(docs/devicelab.md "Publishing phone media": it names the exact eye-checked artifact + digest; an already published
+folder is kept unless `"replace": true`). Once published, they live in `shots/<run_id>/` like an inspect run's
+PNGs: `images` and `embed` can name them (e.g. `{"run": <id>, "image": "3.png"}` or a video frame `frame_04.png`).
+Every phone run with a `shots/<id>/devicelab.json` shows ALL its published screenshots, the frame strip, the video
+(index.html: a `<video>` player; TESTS.md: a link) and one facts line; TESTS.md gets a "Phone runs" section.

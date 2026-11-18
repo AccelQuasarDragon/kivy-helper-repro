@@ -127,10 +127,9 @@ no variant Fbo / BoxShadow, so it cannot be the ladder factor), not a switch cra
 Android version first.
 
 ## Untested
-- Nothing has run on GitHub or Android yet: matrix.yml (incl. the facts table and re-run naming),
-  inspect.yml's `artifact_run` / `artifact_name` path (cross-run artifact download),
-  the materialyoucolor 3.0.4 recipe build, android.api 36, the APKs, the emulator gate taps (START
-  position worked out from the layout, not measured), the install steps on Android 11.
+- Written before the first runs. Runs have happened since (matrix.yml, inspect.yml gates, devicelab.yml on a
+  Pixel 5); their results are in the published reports (docs/cards.md "Report cards") and the run pages
+  (docs/devicelab.md), not copied here.
 - Desktop only (Windows, kivy 2.3.2, KivyMD master, materialyoucolor 3.0.4, autotest): all 5 reach
   20/20 + DONE with the per-switch numbers in the table above. A desktop pass does not prove the APK
   imports.
@@ -235,9 +234,10 @@ Ripple: `STUB bisect ripple_fbo_fs=create|ripple_stencil=off|list_ripple=off pat
 (at setup; widgets made later, e.g. recycled items, are covered but not counted there).
 
 ## Untested
-Nothing has run on GitHub or Android yet. The controlP part of `_bisect.py` is only compiled locally; the ripple toggles
-also ran on desktop Kivy (below). The controlP attribute names come from
+Written before the first runs. Runs have happened since (inspect.yml gates, devicelab.yml on a Pixel 5); their results
+are in the published reports (docs/cards.md "Report cards", docs/devicelab.md), not copied here. Before them, the controlP
+part of `_bisect.py` was only compiled locally and the ripple toggles ran on desktop Kivy (below). The controlP attribute names come from
 their source at the pinned commit and KivyMD master a00c10c, which the build fetches unpinned (check it is unchanged).
 The ripple toggles: checked against KivyMD a00c10c's source by ast (tests/test_controlp_bisect.py, aliases followed) and run
-on desktop only (tools/ripple_runtime_check.py, Kivy 2.3.1 where the build uses 2.3.2; desktop GL, not Adreno). Not run inside
-controlP, on the emulator or on a phone. Whether the S0/T1/T2/W gates pass, and what the phone shows, is unknown until they run.
+on desktop (tools/ripple_runtime_check.py, Kivy 2.3.1 where the build uses 2.3.2; desktop GL, not Adreno) before the
+S0 / T1 / T2 / W gates and phone runs; what those showed is in the published report.
