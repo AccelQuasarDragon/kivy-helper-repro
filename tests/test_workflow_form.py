@@ -49,7 +49,11 @@ def main() -> int:
         if not same_names:
             print('   form:', list(form), '\n   ref: ', list(ref))
         ok = ok and same_names and same_defaults and bool(name)
-    return 0 if ok else 1
+    name, form = card_page.workflow_form('devicelab.yml')
+    dl = name == 'device lab' and form == {'label': 'devicelab', 'artifact_run': '', 'artifact_name': '', 'device': 'redfin',
+                                           'version': '30', 'taps': '', 'timeout': '5m'} and list(form) == list(reference('devicelab.yml'))
+    print(f'{"PASS" if dl else "FAIL"} devicelab.yml: 7 inputs in form order, defaults label=devicelab device=redfin version=30 timeout=5m')
+    return 0 if ok and dl else 1
 
 
 if __name__ == '__main__':
