@@ -261,9 +261,34 @@ def main():
             check('video element (Pages URL) + strip on index.html',
                   f'<video controls preload="metadata" playsinline src="{run_page}202/video.mp4"></video>' in page
                   and '/shots/shots/202/strip.png' in page)
-            check('TESTS.md phone section: strip, sheet, video link',
-                  '### Phone run 202' in tests and '202/strip.png' in tests and '202/sheet.png' in tests and
-                  f'({run_page}202/video.mp4)' in tests and '(#phone-run-202)' in tests)
+            check('TESTS.md phone run block: strip, sheet, video link; table links to it',
+                  '<a id="run-202"></a>\n\n### phone run\n' in tests and '202/strip.png' in tests and '202/sheet.png' in tests and
+                  f'({run_page}202/video.mp4)' in tests and '(#run-202)' in tests)
+            check('no separate "Phone runs" section left', '## Phone runs' not in tests and '<h2>Phone runs' not in page
+                  and 'phone-run-' not in tests + page)
+            check('phone intro kept once at the top of the runs part (both views)',
+                  tests.count(cp.md(cp.PHONE_INTRO)) == 1 and page.count(html.escape(cp.PHONE_INTRO, quote=True)) == 1
+                  and tests.index('## Runs') < tests.index(cp.md(cp.PHONE_INTRO)) < tests.index('<a id="run-101">'))
+            # one block per run: phone run 202 = heading, rows in order, then video, strip, screenshots
+            blk = page.split('<section id="run-202">', 1)[1].split('</section>', 1)[0]
+            order = ['<h3>phone run</h3>', '>Where it ran<', 'Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator',
+                     '>Settings<', '>Test Lab<', 'Test Lab outcome Failed (Application crashed)', '>Links<', '#recreate-run-202',
+                     '</table>', '<video ', 'strip.png', '/202/0.png', '/202/10.png']
+            pos = [blk.find(x) for x in order]
+            check('phone run block (HTML): table rows then video, strip, screenshots in order', -1 not in pos and pos == sorted(pos), list(zip(order, pos)))
+            blk = tests.split('<a id="run-202"></a>', 1)[1].split('<a id=', 1)[0].split('\n## ', 1)[0]
+            order = ['| **Where it ran** |', '| **Settings** |', '| **Test Lab** |', '| **Links** |', 'Video: ', 'strip.png', '202/sheet.png', '202/0.png']
+            pos = [blk.find(x) for x in order]
+            check('phone run block (TESTS.md): table rows then video, strip, sheet, screenshots', -1 not in pos and pos == sorted(pos), list(zip(order, pos)))
+            blk = page.split('<section id="run-101">', 1)[1].split('</section>', 1)[0]
+            check('emulator run block (HTML) holds its images + run card link', '/101/00_launch.png' in blk and f'href="{run_page}101/"' in blk
+                  and 'GitHub Actions emulator (inspect.yml' in blk)
+            blk = tests.split('<a id="run-101"></a>', 1)[1].split('<a id=', 1)[0]
+            check('emulator run block (TESTS.md) holds its screenshot link', '/101/00_launch.png' in blk)
+            for rid in ('101', '202'):
+                check(f'recreate anchor of run {rid} resolves (HTML id + TESTS.md heading)',
+                      f'href="#recreate-run-{rid}"' in page and f'<section id="recreate-run-{rid}">' in page
+                      and f'(#recreate-run-{rid})' in tests and f'\n### Recreate run {rid}\n' in tests)
             check('phone facts: "--" details never shown', cp.phone_line({'phone': {'facts': {'outcome': 'Passed', 'details': '--'}}})
                   == 'Phone run (Firebase Test Lab): Test Lab outcome Passed')
             check('phone facts line', 'Test Lab outcome Failed (Application crashed)' in page and 'test time 88 s' in page)
@@ -294,6 +319,110 @@ def main():
         write(os.path.join(ph, 'devicelab.json'), json.dumps(dict(rec, run_id='999')))
         rc, err, _ = render_all(tmp, base_spec(), shots)
         check('devicelab.json of another run is refused', rc == 2 and 'devicelab.json' in err, err)
+
+    # ---- section text: a newline = a new paragraph; '- x' / 'N. x' lines = lists (multi-line text only) ----
+    e = lambda s: html.escape(str(s), quote=True)  # noqa: E731
+    check('blocks: "a\\nb\\n\\nc" = three paragraphs', cp.blocks('a\nb\n\nc') == [('p', 0, 'a'), ('p', 0, 'b'), ('p', 0, 'c')])
+    for t in CORPUS + ['- not a list on one line', '1. not a list on one line', '  ']:
+        if not t.strip() or '\n' in t:
+            continue
+        check(f'single-line text renders as before: {t[:30]!r}', cp.html_blocks(t, e) == [f'<p>{e(t)}</p>']
+              and cp.md_blocks(t) == [cp.md(t), ''])
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, h, m = render_all(tmp, base_spec(sections=[{'heading': 'h', 'text': 'a\nb\n\nc'}]))
+        check('"a\\nb\\n\\nc": three <p> in HTML', rc == 0 and '<p>a</p>\n<p>b</p>\n<p>c</p>\n' in h, h[-400:])
+        check('"a\\nb\\n\\nc": three paragraphs in TESTS.md', '## h\n\na\n\nb\n\nc\n\n' in m, m[-400:])
+        rc, h, m = render_all(tmp, base_spec(description='d1 <b>\nd2', sections=[{'heading': 'h', 'text': (
+            'x <script>alert(1)</script>\n- <script>i</script> & *m* [l](u)\n- two\n'
+            '3. `t` | #h\n4. four\nend')}]))
+        check('description lines: each its own <p> / paragraph', rc == 0 and '<p>d1 &lt;b&gt;</p>\n<p>d2</p>' in h
+              and 'd1 &lt;b&gt;\n\nd2\n\n' in m)
+        check('HTML: paragraph line escaped', '<p>x &lt;script&gt;alert(1)&lt;/script&gt;</p>' in h)
+        check('HTML: bulleted items escaped', '<ul><li>&lt;script&gt;i&lt;/script&gt; &amp; *m* [l](u)</li><li>two</li></ul>' in h)
+        check('HTML: numbered list starts at the first number', '<ol start="3"><li>`t` | #h</li><li>four</li></ol>\n<p>end</p>' in h)
+        check('HTML: no live script from section text', '<script>alert' not in h and '<script>i' not in h)
+        check('TESTS.md: bulleted items through md()',
+              '\n- &lt;script&gt;i&lt;/script&gt; &amp; \\*m\\* \\[l\\]\\(u\\)\n- two\n\n' in m, m[-600:])
+        check('TESTS.md: numbered items through md(), numbered from the first', '\n3. \\`t\\` \\| \\#h\n4. four\n\nend\n\n' in m)
+        check('TESTS.md: list starts after a blank line', 'alert\\(1\\)&lt;/script&gt;\n\n- ' in m)
+
+    # ---- recreate: devicelab.yml phone runs (they write no inputs.json) ----
+    name, form = cp.workflow_form('devicelab.yml')
+    check('devicelab.yml form read from the file', name == 'device lab' and list(form) == [
+        'label', 'artifact_run', 'artifact_name', 'device', 'version', 'taps', 'timeout'] and form['device'] == 'redfin'
+        and form['artifact_run'] == '', (name, form))
+    dl = {'id': 202, 'label': 'phone run', 'workflow': 'devicelab.yml', 'recreate': {
+        'label': 'made-up bisect T9 on Pixel 5', 'artifact_run': '12345678901', 'artifact_name': 'build-7-T9-a1',
+        'taps': '540,2000,5;540,600,8', 'device': 'redfin', 'version': '30', 'timeout': '5m'}}
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, h, m = render_all(tmp, base_spec(runs=[{'id': 101, 'label': 'inspect run'}, dl]))
+        check('devicelab recreate: gh command for devicelab.yml with only the changed inputs', rc == 0 and
+              'gh workflow run devicelab.yml --repo ' + REPO + " --ref main --json <<'JSON'\n{\n"
+              ' "label": "made-up bisect T9 on Pixel 5",\n "artifact_run": "12345678901",\n'
+              ' "artifact_name": "build-7-T9-a1",\n "taps": "540,2000,5;540,600,8"\n}\nJSON' in m, m[-900:])
+        check('devicelab recreate: workflow named in the steps', 'pick &quot;device lab&quot; (devicelab.yml)' in h)
+        check('devicelab settings: artifact + device, no cache', 'artifact build\\-7\\-T9\\-a1 of run 12345678901 · device redfin API 30 · [how' in m
+              and 'API 30 · cache' not in m)
+        check('devicelab recreate: says it re-tests the APK (no rebuild)', 'tests the same APK artifact again' in h)
+        check('no-inputs fallback: no 2026-11-16 claim', '2026-11-16' not in h and
+              'It has no inputs.json and the report spec gives no recreate inputs for it.' in h)
+    # ---- run blocks: verdict, `learned`, badges ----
+    for res, want in [('CRASH: SIGSEGV', ('CRASH', 'crash')), ('crash (native): x', ('', 'neutral')), ('CRASH: x', ('CRASH', 'crash')),
+                      ('clean: x', ('CLEAN', 'clean')), ('Clean install crashed: SIGSEGV', ('', 'neutral')),
+                      ('Crash-free run: yes', ('', 'neutral')), ('PASS, no traceback.', ('PASS', 'clean')), ('crash , x', ('CRASH', 'crash')),
+                      ('FAILED: x', ('FAILED', 'crash')), ('Fail: x', ('FAIL', 'crash')), ('clean: no crash', ('CLEAN', 'clean')),
+                      ('PASS: ok', ('PASS', 'clean')), ('APP DIED', ('', 'neutral')), ('CRASH without colon', ('', 'neutral')),
+                      ('maybe: x', ('', 'neutral')), ('', ('', 'neutral')), ('cleanly: x', ('', 'neutral'))]:
+        check(f'verdict({res!r}) = {want}', cp.verdict(res) == want, cp.verdict(res))
+    raises('learned over the length cap refused', lambda: cp.validate(base_spec(runs=[{'id': 101, 'learned': 'x' * 401}])), 'learned')
+    bad = '<script>alert(1)</script> & *b* | [l](u) `c`'
+    with tempfile.TemporaryDirectory() as tmp:
+        rc, h, m = render_all(tmp, base_spec(runs=[{'id': 101, 'label': 'emu', 'result': 'CRASH: died', 'learned': bad},
+                                                   {'id': 202, 'label': 'ok', 'result': 'clean: fine'},
+                                                   {'id': 303, 'label': 'n', 'result': 'APP DIED'}]))
+        check('run blocks render', rc == 0, h)
+        check('learned escaped in HTML', '<td>&lt;script&gt;alert(1)&lt;/script&gt; &amp; *b* | [l](u) `c`</td>' in h and '<script>alert' not in h)
+        check('learned md-escaped in TESTS.md', f'| **What we learned** | {cp.md(bad)} |' in m and '\\|' in cp.md(bad))
+        check('rows in order: Result, What we learned, Settings, Links', h.index('>Result<') < h.index('>What we learned<')
+              < h.index('>Settings<') < h.index('>Links<'))
+        check('HTML: crash badge + tinted Result row', '<h3>emu <span class="badge crash">CRASH</span></h3>' in h
+              and '<tr class="crash"><th scope="row">Result</th><td>died</td></tr>' in h)
+        check('HTML: clean badge + green row', '<span class="badge clean">CLEAN</span>' in h and '<tr class="clean"><th scope="row">Result</th>' in h)
+        check('HTML: neutral = no badge, untinted row', '<h3>n</h3>' in h and '<tr><th scope="row">Result</th><td>APP DIED</td></tr>' in h)
+        check('HTML: badge / row CSS present; still no script', '.badge.crash{' in h and 'tr.crash th' in h and '<script' not in h)
+        check('TESTS.md: block headings with emoji verdict', '### emu · 🔴 CRASH\n' in m and '### ok · 🟢 CLEAN\n' in m and '### n\n' in m)
+        check('TESTS.md: Result row led by emoji + bold verdict, no doubled "CRASH:"', '| **Result** | 🔴 **CRASH** died |' in m
+              and 'CRASH:' not in m)
+        check('TESTS.md: top table result column badges', '| 🔴 **CRASH** died |' in m and '| 🟢 **CLEAN** fine |' in m and '| APP DIED |' in m)
+        check('HTML: no doubled verdict word', 'CRASH:' not in h and 'clean:' not in h)
+        check('TESTS.md: settings/recreate column still leftmost', '| Settings / recreate | # | run |' in m)
+        check('no-shots run: no "Where it ran" guess', '>Where it ran<' not in h)
+        rc, h, _ = render_all(tmp, base_spec(runs=[]))
+        check('no runs: no run CSS (pages without runs unchanged)', rc == 0 and '.badge' not in h)
+    for res, want in [('CRASH: x y', 'x y'), ('clean:no crash', 'no crash'), ('crash (native): x', 'crash (native): x'),
+                      ('APP DIED: x', 'APP DIED: x'), ('maybe: x', 'maybe: x'), ('CRASH:', 'CRASH:'), ('', ''),
+                      ('PASS, no traceback.', 'no traceback.'), ('Clean install crashed: SIGSEGV', 'Clean install crashed: SIGSEGV')]:
+        check(f'result_shown({res!r}) = {want!r}', cp.result_shown(res) == want, cp.result_shown(res))
+    # phone "Where it ran": recreate without device / version -> the devicelab.yml form defaults (as Settings does)
+    r = {'workflow': 'devicelab.yml', 'phone': None, 'inputs': {'artifact_run': '12345678901', 'artifact_name': 'b-1'}}
+    check('phone Where it ran falls back to the form defaults',
+          cp.where_ran(r) == 'Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin API 30, not an emulator', cp.where_ran(r))
+    check('phone Where it ran: no inputs = no device guessed', cp.where_ran({'workflow': 'devicelab.yml'}) ==
+          'Physical phone in Google Firebase Test Lab (devicelab.yml), not an emulator')
+    # the spec's own `settings` text wins over text derived from recreate / inputs.json
+    with tempfile.TemporaryDirectory() as tmp:
+        own = 'Physical phone: Pixel 5 <b> (shadows on). Same taps as S0.'
+        rc, h, m = render_all(tmp, base_spec(runs=[{'id': 101, 'label': 'p', 'settings': own, 'workflow': 'devicelab.yml',
+                                                   'recreate': {'artifact_run': '12345678901', 'artifact_name': 'build-7-T9-a1'}},
+                                                  {'id': 202, 'label': 'q', 'workflow': 'devicelab.yml',
+                                                   'recreate': {'artifact_run': '12345678901', 'artifact_name': 'build-7-T9-a1'}}]))
+        check('spec settings shown in the Settings row (HTML)', rc == 0 and f'<th scope="row">Settings</th><td>{html.escape(own, quote=True)}</td>' in h)
+        check('spec settings shown in the Settings row + top table (TESTS.md)', f'| **Settings** | {cp.md(own)} |' in m
+              and f'\n| {cp.md(own)} · [how to recreate](#recreate-run-101) | 1 |' in m)
+        check('no spec settings: derived from recreate', 'artifact build\\-7\\-T9\\-a1 of run 12345678901 · device redfin API 30 · [how to recreate](#recreate-run-202)' in m)
+        check('recreate section unchanged by spec settings', 'gh workflow run devicelab.yml' in m and '"artifact_run": "12345678901"' in m)
+
+    raises('unknown recreate workflow refused', lambda: cp.validate(base_spec(runs=[dict(dl, workflow='evil.yml')])), 'workflow')
 
     print(f'{len(FAILS)} failure(s)')
     return 1 if FAILS else 0

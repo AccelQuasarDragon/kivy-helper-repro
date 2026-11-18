@@ -29,15 +29,19 @@ CLI (any card, incl. a report) from a JSON spec:
           "summary": {"bug": "...", "fix": "...", "code": "multi-line code example", "lang": "python",
                       "proof": "lead-in text", "proof_runs": [123, ...], "proof_links": [[text, url], ...]},
           "key_points": ["most important fact", ...],
-          "sections": [{"heading", "text", "diagram": "flowchart TD ...", "image", "images": [...],
+          "sections": [{"heading", "text" (a newline = a new paragraph; '- x' / 'N. x' lines = lists), "diagram": "flowchart TD ...", "image", "images": [...],
                         "links": [[text, url], ...], "page": url}],
-          "runs": [{"id": 123, "label", "question", "result", "cache": "cold|warm|apk",
+          "runs": [{"id": 123, "label", "question", "result", "learned", "cache": "cold|warm|apk",
                     "status": "proven|inferred", "images": ["launch.png", ...],
                     "settings": "short text", "recreate": {"input": "value", ...},
-                    "workflow": "inspect.yml|build.yml (the form `recreate` fills; default inspect.yml)",
+                    "workflow": "inspect.yml|build.yml|devicelab.yml (the form `recreate` fills; default inspect.yml)",
                     "media": {"cleared": true, "artifact": "devicelab-10-a1", "digest": "sha256:<64 hex>",
                               "images": "all" | ["3.png", ...], "video": true, "frames": 8, "replace": false}}],
           "embed": [{"run": 123, "image": "00_launch.png", "caption": "..."}]}
+  runs -> ONE block per run (run_view; index.html and TESTS.md): label + verdict badge (verdict(): the first
+    word of `result` directly followed by ':' or ',', CRASH / FAIL / FAILED = red, CLEAN / PASS = green, else none), a 2-column table
+    (Result, What we learned = `learned`, Question, Where it ran (derived), Settings, Test Lab, Evidence, Links;
+    empty rows skipped), then the run's video, frame strip and screenshots. Recreate steps stay at the bottom.
   summary = the author's 3 bullets ABOVE the title: (1) bug, (2) fix + code example (escaped <pre>, a
     fence in TESTS.md), (3) proof = links to runs (proof_runs: ids from `runs`) and/or allowlisted URLs;
     bug, fix and at least one proof link required. key_points stay right under the title.
@@ -93,7 +97,7 @@ HEX = re.compile(r'[0-9a-f]{7,40}')
 TRUNC_MARK = '…truncated'  # end of an inputs.json value cut at VALUE_MAX (never sent as a recreate value)
 WORKFLOW = re.compile(r'[a-z][a-z0-9_-]{0,40}\.yml')
 WORKFLOWS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, '.github', 'workflows')
-RECREATE_WORKFLOWS = ('inspect.yml', 'build.yml')  # workflows whose form a recreate section can fill
+RECREATE_WORKFLOWS = ('inspect.yml', 'build.yml', 'devicelab.yml')  # workflows whose form a recreate section can fill
 _FORMS = {}
 # Mermaid diagrams (section `diagram`): index.html loads ONE pinned file from jsdelivr with its SRI hash
 # (sha384 of the exact file, identical on unpkg; checked 2026-11-18: a self-contained IIFE, no dynamic
@@ -209,6 +213,52 @@ def md(text, n: int = 0) -> str:
     out = ''.join(ent.get(c) or ('\\' + c if c in MD_PUNCT else c) for c in text)
     out = out.replace(':', ':' + ZWSP).replace('@', '@' + ZWSP)
     return re.sub(r'(?i)(www)(?=\\\.)', r'\1' + ZWSP, out)
+
+
+UL_ITEM = re.compile(r'- (.*\S.*)')
+OL_ITEM = re.compile(r'([0-9]{1,9})\. (.*\S.*)')
+
+
+def blocks(text) -> list:
+    """Free text -> [('p', 0, line) | ('ul', 1, [items]) | ('ol', start, [items])]: a newline starts a new
+    paragraph; in MULTI-line text, consecutive '- x' lines are one bulleted list and consecutive
+    'N. x' lines one numbered list (starting at the first N). Single-line text is always one paragraph.
+    Plain data: each renderer escapes every line / item on its own."""
+    lines = [x for x in str(text).splitlines() if x.strip()]
+    out = []
+    for line in lines:
+        m = (UL_ITEM.fullmatch(line) or OL_ITEM.fullmatch(line)) if len(lines) > 1 else None
+        kind = None if not m else 'ul' if m.re is UL_ITEM else 'ol'
+        if not kind:
+            out.append(('p', 0, line))
+        elif out and out[-1][0] == kind:
+            out[-1][2].append(m[m.re.groups])
+        else:
+            out.append((kind, int(m[1]) if kind == 'ol' else 1, [m[m.re.groups]]))
+    return out
+
+
+def html_blocks(text, e) -> list:
+    """blocks() -> HTML lines, every line / item through e()."""
+    out = []
+    for kind, start, body in blocks(text):
+        if kind == 'p':
+            out.append(f'<p>{e(body)}</p>')
+        else:
+            attr = f' start="{start}"' if kind == 'ol' and start != 1 else ''
+            out.append(f'<{kind}{attr}>' + ''.join(f'<li>{e(x)}</li>' for x in body) + f'</{kind}>')
+    return out
+
+
+def md_blocks(text) -> list:
+    """blocks() -> TESTS.md lines (a blank line after each paragraph / list), every line / item through md()."""
+    out = []
+    for kind, start, body in blocks(text):
+        if kind == 'p':
+            out += [md(body), '']
+        else:
+            out += [f'- {md(x)}' if kind == 'ul' else f'{start + k}. {md(x)}' for k, x in enumerate(body)] + ['']
+    return out
 
 
 def _text(v, name: str, n: int) -> str:
@@ -402,6 +452,7 @@ def validate(card: dict) -> list:
         n = {'id': rid, 'label': _text(r.get('label'), f'run {rid} label', LABEL_MAX) or f'run {rid}',
              'question': _text(r.get('question'), f'run {rid} question', TEXT_MAX),
              'result': _text(r.get('result'), f'run {rid} result', TEXT_MAX),
+             'learned': _text(r.get('learned'), f'run {rid} learned', TEXT_MAX),
              'cache': _text(r.get('cache'), f'run {rid} cache', 10).lower(),
              'status': _text(r.get('status'), f'run {rid} status', 10).lower(), 'images': None,
              'settings': _text(r.get('settings'), f'run {rid} settings', SETTINGS_MAX),
@@ -599,7 +650,7 @@ def changed_inputs(inputs: dict, wf: str = 'inspect.yml') -> dict:
 def settings_text(r: dict) -> str:
     """Short settings of a run: source, app, extra, api_level, patches, cache."""
     i = r.get('inputs')
-    if not i:
+    if r.get('settings') or not i:  # the spec's own words win; derived text only when it gives none
         return r.get('settings') or 'not recorded'
     if i.get('apk_url'):
         src = 'apk_url'
@@ -618,9 +669,12 @@ def settings_text(r: dict) -> str:
     form = workflow_form(r.get('workflow') or 'inspect.yml')[1]
     if i.get('api_level') or form.get('api_level'):
         parts.append(f'api_level {i.get("api_level") or form["api_level"]}')
+    if i.get('device') or form.get('device'):  # devicelab.yml: the lab phone model + its API level
+        parts.append(f'device {i.get("device") or form["device"]} API {i.get("version") or form.get("version", "")}'.rstrip())
     if i.get('patches'):
         parts.append('patches ' + ', '.join(os.path.basename(p.strip()) for p in i['patches'].split(';') if p.strip()))
-    parts.append(f'cache {i.get("cache") or "off"}')
+    if 'cache' in form or not form:  # only a workflow that has a cache input (devicelab.yml has none)
+        parts.append(f'cache {i.get("cache") or "off"}')
     return short(' · '.join(parts), SETTINGS_MAX)
 
 
@@ -645,14 +699,14 @@ def recreate_view(r: dict, repo: str) -> dict:
     out = {'heading': f'Recreate run {r["id"]}', 'id': anchor(r), 'lines': [], 'steps': [], 'pre': ''}
     if not r.get('inputs'):
         out['lines'] = [f'Run {r["id"]} ({r["label"]}): settings not recorded.',
-                        'It has no inputs.json (runs before 2026-11-16 did not write one).',
-                        'The report spec gives no recreate inputs for it either.']
+                        'It has no inputs.json and the report spec gives no recreate inputs for it.']
         return out
     src = ('These settings were recorded by the run itself (shots/<id>/inputs.json).' if r['inputs_src'] == 'run'
            else 'These settings come from the report spec, not from the run itself.')
-    out['lines'] = [f'Run {r["id"]} ({r["label"]}).', src,
-                    'A new run builds again: it reproduces the inputs, not the exact bytes of that run.']
     wf = r.get('workflow') or 'inspect.yml'
+    again = ('A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.'
+             if wf == 'devicelab.yml' else 'A new run builds again: it reproduces the inputs, not the exact bytes of that run.')
+    out['lines'] = [f'Run {r["id"]} ({r["label"]}).', src, again]
     wf_name = workflow_form(wf)[0] or wf
     out['workflow'], out['workflow_name'] = wf, wf_name
     changed = changed_inputs(r['inputs'], wf)
@@ -714,12 +768,76 @@ def summary_view(card: dict, runs: list, ctx) -> dict | None:
     return dict(sm, links=links)
 
 
-def run_lines(r: dict) -> list:
-    """Plain-text lines for a run, one idea per line (escaped by each renderer)."""
+VERDICTS = {'CRASH': 'crash', 'FAIL': 'crash', 'FAILED': 'crash', 'CLEAN': 'clean', 'PASS': 'clean'}
+VERDICT_EMOJI = {'crash': '🔴', 'clean': '🟢'}
+VERDICT_LEAD = re.compile(r'\s*([A-Za-z]+)\s*[:,]\s*')  # the result's first word, directly followed by ':' or ','
+PHONE_INTRO = "Firebase Test Lab runs on Google's lab phones. Every image and video here was looked at before publishing."
+
+
+def verdict(result: str) -> tuple:
+    """(WORD, kind) from a run's result: its first word when directly followed by ':' or ',' (any case), if it
+    is a known verdict word (VERDICTS: CRASH / FAIL / FAILED -> 'crash', CLEAN / PASS -> 'clean'); else
+    ('', 'neutral'). "Clean install crashed: x" and "Crash-free run: yes" are neutral."""
+    m = VERDICT_LEAD.match(result or '')
+    word = m[1].upper() if m else ''
+    return (word, VERDICTS[word]) if word in VERDICTS else ('', 'neutral')
+
+
+def result_shown(result: str) -> str:
+    """The result as displayed next to its badge / emoji: a leading 'WORD:' / 'WORD,' that is the verdict is
+    dropped (the badge already says it); any other result is shown whole."""
+    m = VERDICT_LEAD.match(result or '')
+    return result[m.end():] if m and m[1].upper() in VERDICTS and result[m.end():].strip() else (result or '')
+
+
+def is_phone(r: dict) -> bool:
+    return bool(r.get('phone')) or r.get('workflow') == 'devicelab.yml'
+
+
+def where_ran(r: dict) -> str:
+    """Where a run ran, derived from its workflow / devicelab.json / inputs; '' when unknown."""
+    i = r.get('inputs') or {}
+    if is_phone(r):
+        form = workflow_form('devicelab.yml')[1] if i else {}  # an input left out = its form default (as in Settings)
+        d, ver = i.get('device') or form.get('device'), i.get('version') or form.get('version') or ''
+        dev = ((r.get('phone') or {}).get('facts') or {}).get('device') or (f'{d} API {ver}'.strip() if d else '')
+        return ('Physical phone in Google Firebase Test Lab (devicelab.yml)' +
+                (f': device {dev}' if dev else '') + ', not an emulator')
+    if r.get('workflow', 'inspect.yml') == 'inspect.yml' and (i or r.get('picked')):
+        if i.get('static_only') == 'true':
+            return 'GitHub Actions runner (inspect.yml): static APK checks only, no emulator'
+        form = workflow_form('inspect.yml')[1]
+        prof = (f'; profile {i.get("profile") or form.get("profile") or "?"}, API {i.get("api_level") or form.get("api_level") or "?"}'
+                if i else '')
+        return f'GitHub Actions emulator (inspect.yml; x86_64, software-rendered{prof})'
+    return ''
+
+
+def run_view(r: dict, ctx) -> dict:
+    """ONE block per run, as plain data (each renderer escapes it): {id, label, word, kind, rows:
+    [(name, text)] in order (empty rows skipped; Result first), links: [(text, url)], recreate (anchor),
+    video, strip, images, sheet (URLs; ctx only), shot_names}."""
+    word, kind = verdict(r['result'])
     tags = ' · '.join(t.upper() if t in CACHES else t for t in (r['cache'], r['status']) if t)
-    lines = [f'Question: {r["question"]}' if r['question'] else '', f'Result: {r["result"]}' if r['result'] else '',
-             f'Evidence: {tags}' if tags else '', f'Settings: {settings_text(r)}', phone_line(r)]
-    return [x for x in lines if x]
+    ph = r.get('phone') or {}
+    facts = phone_line(r).split(': ', 1)[-1] if phone_line(r) else ''
+    rows = [('Result', result_shown(r['result']) if word else r['result']),('What we learned', r.get('learned') or ''), ('Question', r['question']),
+            ('Where it ran', where_ran(r)), ('Settings', settings_text(r)), ('Test Lab', facts), ('Evidence', tags)]
+    rows += [('Note', n) for n in ph.get('notes') or []]
+    v = {'id': r['id'], 'label': r['label'], 'word': word, 'kind': kind, 'rows': [x for x in rows if x[1]],
+         'links': [], 'recreate': anchor(r), 'video': '', 'strip': '', 'images': [], 'sheet': '', 'shot_names': []}
+    if ctx:
+        v['links'] = [('Actions run', ctx.run_url(r['id']))] + ([('run card', ctx.run_page(r['id']))] if r.get('has_page') else [])
+        shown = ph['images'] if ph else (r.get('picked') or [])  # a phone run: ALL its published screenshots
+        v['images'] = [ctx.png(r['id'], i) for i in shown]
+        v['shot_names'] = shown
+        if ph.get('strip'):
+            v['strip'] = ctx.png(r['id'], ph['strip'])
+        if ph.get('video'):
+            v['video'] = ctx.pages_file(r['id'], ph['video'])
+        if ph.get('sheet'):
+            v['sheet'] = ctx.png(r['id'], ph['sheet'])
+    return v
 
 
 def embed_items(card: dict, runs: list, shots_root: str) -> list:
@@ -748,26 +866,10 @@ def expand(card: dict, runs: list, ctx, embed=False) -> dict:
             card['image'] = ctx.embed
     card['summary_view'] = summary_view(card, runs, ctx)
     sections = list(card.get('sections') or [])
-    for r in runs:
-        s = {'heading': r['label'], 'id': f'run-{r["id"]}', 'lines': run_lines(r),
-             'anchor_links': [('how to recreate', anchor(r))]}
-        if ctx:
-            ph = r.get('phone')
-            # a run card page only when shots/<id>/index.html exists (devicelab runs have none: no dead link)
-            if r.get('has_page'):
-                s['page'] = ctx.run_page(r['id'])
-            # a phone run shows ALL its published screenshots; other runs their picked ones
-            shown = ph['images'] if ph else (r.get('picked') or [])
-            s['images'] = [ctx.png(r['id'], i) for i in shown]
-            s['links'] = [['run', ctx.run_url(r['id'])]] + ([['run card', ctx.run_page(r['id'])]] if r.get('has_page') else [])
-            if ph:
-                if ph['strip']:
-                    s['strip'] = ctx.png(r['id'], ph['strip'])
-                if ph['video']:
-                    s['video'] = ctx.pages_file(r['id'], ph['video'])
-                    s['links'].append(['video (mp4)', s['video']])
-                s['lines'] += [f'Note: {n}' for n in ph['notes']]
-        sections.append(s)
+    if runs:  # ONE block per run (run_view): verdict, a table of everything about it, then its media
+        sections.append({'heading': 'Runs', 'id': 'runs',
+                         'lines': [PHONE_INTRO] if ctx and any(r.get('phone') for r in runs) else []})
+        sections += [{'id': f'run-{r["id"]}', 'run': run_view(r, ctx)} for r in runs]
     if runs:
         sections.append({'heading': 'How to recreate', 'id': 'how-to-recreate',
                          'lines': ['Each run below: its settings, step by step in the Actions tab, and the same as one gh command.']})
@@ -824,7 +926,7 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
             '.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}'
             'video{max-width:100%;width:360px;display:block;margin:8px 0}'
             '.summary{background:#1b2533;border:1px solid #2b6cb0;padding:8px 8px 8px 32px}'
-            '.summary pre{background:#0b0f14}</style>',
+            '.summary pre{background:#0b0f14}' + (RUN_CSS if any(s.get('run') for s in sections) else '') + '</style>',
             '</head>', '<body>']
     sv = card.get('summary_view')
     if sv:  # the author's three top bullets, ABOVE the title: bug, fix (+ code), proof links
@@ -838,7 +940,7 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
     if card.get('key_points'):
         out.append('<ul class="key">' + ''.join(f'<li>{e(k)}</li>' for k in card['key_points']) + '</ul>')
     if card.get('description'):
-        out.append(f'<p>{e(card["description"])}</p>')
+        out += html_blocks(card['description'], e)
     if extra_links:
         out.append('<p>' + ' · '.join(f'<a href="{u(href)}">{e(text)}</a>' for text, href in extra_links) + '</p>')
     if card.get('image'):
@@ -848,11 +950,15 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
                 f'<a href="{u(card["sheet_image"])}"><img src="{u(card["sheet_image"])}" alt="contact sheet"></a>']
     for s in sections:
         out.append(f'<section id="{a(s["id"])}">' if s.get('id') else '<section>')
+        if s.get('run'):
+            out += run_html(s['run'], e, u, a)
+            out.append('</section>')
+            continue
         if s.get('heading'):
             h = e(s['heading'])
             out.append(f'<h2><a href="{u(s["page"])}">{h}</a></h2>' if s.get('page') else f'<h2>{h}</h2>')
         if s.get('text'):
-            out.append(f'<p>{e(s["text"])}</p>')
+            out += html_blocks(s['text'], e)
         if s.get('diagram') is not None:  # mermaid reads the element's text: escaped here, inert as HTML
             out.append(f'<pre class="mermaid">{e(validate_diagram(s["diagram"], "diagram"))}</pre>')
         out += [f'<p>{e(line)}</p>' for line in s.get('lines') or []]
@@ -887,6 +993,39 @@ def render(card: dict, hosts=ALLOWED_HOSTS, extra_links=()) -> str:
     return '\n'.join(out)
 
 
+RUN_CSS = ('table.run{border-collapse:collapse;margin:8px 0;max-width:100%}'
+           'table.run th,table.run td{border:1px solid #444;padding:4px 8px;text-align:left;vertical-align:top}'
+           'table.run th{white-space:nowrap;color:#bbb;font-weight:600}'
+           '.badge{display:inline-block;border-radius:4px;padding:0 8px;font-size:.75em;vertical-align:middle;color:#fff}'
+           '.badge.crash{background:#c53030}.badge.clean{background:#2f855a}'
+           'tr.crash th,tr.crash td{background:#3d1a1a}tr.clean th,tr.clean td{background:#173b26}')
+
+
+def run_html(v: dict, e, u, a) -> list:
+    """One run block (run_view) -> HTML lines: <h3> label + verdict badge, the rows table (Result row
+    tinted by verdict), then video, frame strip and screenshots. Text through e(), URLs through u()."""
+    badge = f' <span class="badge {v["kind"]}">{e(v["word"])}</span>' if v['word'] else ''
+    out = [f'<h3>{e(v["label"])}{badge}</h3>', '<table class="run">']
+    for name, text in v['rows']:
+        tint = f' class="{v["kind"]}"' if name == 'Result' and v['word'] else ''
+        out.append(f'<tr{tint}><th scope="row">{e(name)}</th><td>{e(text)}</td></tr>')
+    links = [f'<a href="{u(href)}">{e(text)}</a>' for text, href in v['links']]
+    if v['video']:
+        links.append(f'<a href="{u(v["video"])}">video (mp4)</a>')
+    links.append(f'<a href="#{a(v["recreate"])}">how to recreate</a>')
+    out += [f'<tr><th scope="row">Links</th><td>{" · ".join(links)}</td></tr>', '</table>']
+    if v['video']:
+        out.append(f'<video controls preload="metadata" playsinline src="{u(v["video"])}"></video>')
+    if v['strip']:
+        out += ['<p>Frames sampled from the video:</p>',
+                f'<a href="{u(v["strip"])}"><img src="{u(v["strip"])}" alt="video frames" loading="lazy"></a>']
+    if v['images']:
+        out.append('<div class="shots">')
+        out += [f'<a href="{u(i)}"><img src="{u(i)}" alt="{e(i.rsplit("/", 1)[-1])}" loading="lazy"></a>' for i in v['images']]
+        out.append('</div>')
+    return out
+
+
 def csp(scripts: bool, hosts=ALLOWED_HOSTS) -> str:
     """Content-Security-Policy of a card page: images / video only from the allowlisted hosts that serve
     files (raw.githubusercontent.com, the Pages host, any --allow-host; not github.com, whose image
@@ -911,6 +1050,30 @@ def code(value: str) -> str:
     ticks = '`' * (max([len(m) for m in re.findall(r'`+', value)], default=0) + 1)
     pad = ' ' if value.startswith('`') or value.endswith('`') else ''
     return f'{ticks}{pad}{value}{pad}{ticks}'
+
+
+def run_md(v: dict, link, dest) -> list:
+    """One run block (run_view) -> TESTS.md lines: an anchor (#run-<id>), '### label · emoji VERDICT', a
+    2-column table (bold row names; Result led by emoji + **VERDICT**), then video link, frame strip,
+    screenshot sheet and screenshot links. Text through md(); links through link() / our own anchors."""
+    emoji = VERDICT_EMOJI.get(v['kind'])
+    out = [f'<a id="run-{v["id"]}"></a>', '',
+           f'### {md(v["label"])}' + (f' · {emoji} {v["word"]}' if emoji else ''), '',
+           '| Field | Value |', '|---|---|']
+    for name, text in v['rows']:
+        lead = f'{emoji} **{v["word"]}** ' if name == 'Result' and emoji else ''
+        out.append(f'| **{md(name)}** | {lead}{md(text)} |')
+    links = [link(t, h) for t, h in v['links']] + [f'[how to recreate](#{v["recreate"]})']
+    out += [f'| **Links** | {" · ".join(links)} |', '']
+    if v['video']:
+        out += [f'Video: {link("video.mp4", v["video"])}', '']
+    if v['strip']:
+        out += ['Frames sampled from the video:', '', f'![video frames]({dest(v["strip"])})', '']
+    if v['sheet']:
+        out += ['All published screenshots:', '', f'![screenshots]({dest(v["sheet"])})', '']
+    if v['images']:
+        out += [' '.join(link(os.path.splitext(n)[0], i) for n, i in zip(v['shot_names'], v['images'])), '']
+    return out
 
 
 def render_md(card: dict, runs: list, ctx, hosts=ALLOWED_HOSTS) -> str:
@@ -938,7 +1101,7 @@ def render_md(card: dict, runs: list, ctx, hosts=ALLOWED_HOSTS) -> str:
     if card.get('key_points'):
         out += [f'- {md(k)}' for k in card['key_points']] + ['']
     if card.get('description'):
-        out += [md(card['description']), '']
+        out += md_blocks(card['description'])
     if ctx:
         top = [link('card page', ctx.page)]
         if any(r.get('picked') for r in runs):
@@ -956,37 +1119,27 @@ def render_md(card: dict, runs: list, ctx, hosts=ALLOWED_HOSTS) -> str:
                     cell += f' ({link("card", ctx.run_page(r["id"]))})'
                 pngs = ' '.join(link(os.path.splitext(i)[0], ctx.png(r['id'], i)) for i in r.get('picked') or [])
                 if r.get('phone'):
-                    pngs = (pngs + ' · ' if pngs else '') + f'[phone media](#phone-run-{r["id"]})'
+                    pngs = (pngs + ' · ' if pngs else '') + f'[phone media](#run-{r["id"]})'
 
             else:
                 cell, pngs = f'{md(r["label"])} (run {r["id"]})', ''
             settings = f'{md(settings_text(r))} · [how to recreate](#{anchor(r)})'
-            out.append(f'| {settings} | {k} | {cell} | {md(r["question"]) or " "} | {md(r["result"]) or " "} | '
+            word, kind = verdict(r['result'])
+            emoji = VERDICT_EMOJI.get(kind)
+            result = f'{emoji} **{word}** {md(result_shown(r["result"]))}' if emoji else (md(r['result']) or ' ')
+            out.append(f'| {settings} | {k} | {cell} | {md(r["question"]) or " "} | {result} | '
                        f'{r["cache"] or " "} | {r["status"] or " "} | {pngs or "none"} |')
         out.append('')
-    phone = [r for r in runs if r.get('phone')] if ctx else []
-    if phone:
-        out += ['## Phone runs: video frames and screenshots', '',
-                'Firebase Test Lab runs on Google\'s lab phones. Every image and video here was looked at before publishing.', '']
-        for r in phone:
-            ph = r['phone']
-            out += [f'### Phone run {r["id"]}', '', f'{link(r["label"], ctx.run_url(r["id"]))}', '']
-            if phone_line(r):
-                out += [md(phone_line(r)), '']
-            out += [md(f'Note: {n}') + '\n' for n in ph['notes']]
-            if ph['strip']:
-                out += ['Frames sampled from the video:', '', f'![video frames]({dest(ctx.png(r["id"], ph["strip"]))})', '']
-            if ph['video']:
-                out += [f'Video: {link("video.mp4", ctx.pages_file(r["id"], ph["video"]))}', '']
-            if ph['sheet']:
-                out += ['All published screenshots:', '', f'![screenshots]({dest(ctx.png(r["id"], ph["sheet"]))})', '']
-            if ph['images']:
-                out += [' '.join(link(os.path.splitext(i)[0], ctx.png(r['id'], i)) for i in ph['images']), '']
+        out += ['## Runs', '']
+        if ctx and any(r.get('phone') for r in runs):
+            out += [md(PHONE_INTRO), '']
+        for r in runs:  # ONE block per run (run_view); its recreate steps stay in "How to recreate" (linked)
+            out += run_md(run_view(r, ctx), link, dest)
     for s in card.get('sections') or []:
         if s.get('heading'):
             out += [f'## {link(s["heading"], s["page"]) if s.get("page") else md(s["heading"])}', '']
         if s.get('text'):
-            out += [md(s['text']), '']
+            out += md_blocks(s['text'])
         if s.get('diagram') is not None:  # GitHub renders the fence (its own sandbox); validated anyway
             d = validate_diagram(s['diagram'], 'diagram')
             out += [f'{fence(d)}mermaid', d, fence(d), '']

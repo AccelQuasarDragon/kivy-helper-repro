@@ -102,9 +102,10 @@ The author's rules for every report, and how card_page.py follows them:
 
 Spec fields (all optional):
 - `key_points`: a list of strings (max 10, 400 chars each) = bullets right under the title, in TESTS.md and index.html.
-- run `settings`: short text, used only when the run has no inputs.json.
+- run `settings`: short text; when given, it is what the Settings row and the table's settings column show (text derived from inputs.json / `recreate` only when it is absent).
 - run `recreate`: an object of inspect inputs (`{"repo": "...", "extra": "..."}`), used only when the run has no inputs.json.
-- run `workflow`: `inspect.yml` (default) or `build.yml`: the form `recreate` fills (inputs.json names its own).
+- section `text` and the spec `description`: a newline starts a new paragraph; in multi-line text, consecutive `- x` lines are a bulleted list and consecutive `N. x` lines a numbered list (starting at the first N). Single-line text is one paragraph.
+- run `workflow`: `inspect.yml` (default), `build.yml` or `devicelab.yml` (phone runs: they write no inputs.json, so give `recreate`): the form `recreate` fills (inputs.json names its own).
 - Form defaults (which fields a recreate section lists) are READ from that workflow file at render time, never a hand copy.
 - An inputs.json value over 2000 chars is cut and marked `…truncated` (not an error).
 - `embed`: a list (max 6) of `{"run": <id>, "image": "<png in shots/<id>/>", "caption": "<= 80 chars"}`.
@@ -112,7 +113,7 @@ Spec fields (all optional):
 Settings / recreate column (leftmost column of the TESTS.md table): GENERATED, never hand-written.
 - inspect.yml's shots job writes `shots/<run_id>/inputs.json`: every dispatch input of that run (none is a secret).
 - card_page.py reads it from the `--shots-root` checkout (report.yml's sparse checkout includes it).
-- No inputs.json (runs before 2026-11-16): the run's spec `recreate`, else its `settings` text, else "not recorded".
+- No inputs.json (inspect / build runs before 2026-11-16, and every devicelab run): the recreate steps come from the run's spec `recreate`; the settings cell is its `settings` text, else derived from `recreate`, else "not recorded".
 - The cell = source (`repo@ref`, first 7 chars of a commit sha), app, extra, api_level, patches, cache.
 - The cell links to `### Recreate run <id>` in the `## How to recreate` section at the bottom (same in index.html).
 - Each recreate section: where its settings came from, numbered steps (Actions tab -> inspect apk -> Run workflow
@@ -125,7 +126,15 @@ that matter. The full `sheet.png` stays on the page and in TESTS.md.
 
 Warnings: an og:description over 180 chars prints `warning: ...` (card_page.py); report.yml copies it into its
 summary as a "card warning" line. It is not a failure (Discord just cuts the text).
-Generated run text on index.html is one line per idea (Question / Result / Evidence / Settings).
+
+Run blocks (PR 6): ONE block per run under `## Runs`, holding everything about that run (index.html and TESTS.md):
+- A result that starts with its verdict word + `:` or `,` is shown without that lead (the badge / emoji says it).
+- Heading = label + verdict (index.html: a red / green badge; TESTS.md: `### label · 🔴 CRASH` / `🟢`). Its anchor is `#run-<id>`.
+- Verdict = the first word of `result` when directly followed by `:` or `,` (so "Clean install crashed: x" is neutral), any case: CRASH / FAIL / FAILED = crash (red), CLEAN / PASS = clean (green). Anything else = neutral: no badge.
+- Then a 2-column table, empty rows skipped, in this order: Result (tinted by verdict), What we learned (run `learned`, <= 400 chars, optional), Question, Where it ran, Settings, Test Lab (phone facts), Evidence, Note(s), Links (Actions run, run card if it exists, how to recreate).
+- Where it ran is derived: devicelab runs = "Physical phone in Google Firebase Test Lab ... not an emulator" (device from devicelab.json, else the recreate inputs); inspect.yml runs with inputs or screenshots = "GitHub Actions emulator (... profile, API from inputs.json)"; else no row.
+- Then the run's media: video, frame strip, screenshots (phone runs: all published ones + their sheet).
+- The top TESTS.md table shows the verdict emoji in its result column; the recreate steps stay in `## How to recreate`.
 
 ## Report additions (PR 5, 2026-11-18)
 All optional spec keys; card_page.py's docstring has the exact shapes.
@@ -166,4 +175,4 @@ Phone runs (devicelab.yml): their screenshots, video and a frame strip go on the
 folder is kept unless `"replace": true`). Once published, they live in `shots/<run_id>/` like an inspect run's
 PNGs: `images` and `embed` can name them (e.g. `{"run": <id>, "image": "3.png"}` or a video frame `frame_04.png`).
 Every phone run with a `shots/<id>/devicelab.json` shows ALL its published screenshots, the frame strip, the video
-(index.html: a `<video>` player; TESTS.md: a link) and one facts line; TESTS.md gets a "Phone runs" section.
+(index.html: a `<video>` player; TESTS.md: a link) and one facts line (the Test Lab row), all inside that run's block (Run blocks above).
