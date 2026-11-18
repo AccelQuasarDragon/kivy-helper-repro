@@ -4,6 +4,9 @@ name: report card
 # in shots/<slug>/ on branch `shots` (served by GitHub Pages; docs/cards.md):
 #   index.html (Discord card page), TESTS.md (every run in a table), sheet.png (ONE contact sheet of the runs).
 #   + embed.png (highlights sheet = og:image) when the spec has `embed`.
+#   + phone media: a run with `"media": {"cleared": true, ...}` (set ONLY after the operator looked at every image
+#     and the video) gets its devicelab artifact's screenshots / video / frames copied to shots/<run_id>/.
+# media (the ONLY job here with actions: read: fetches cleared devicelab artifacts, tools/devicelab_media.py) ->
 # render (read-only: the runs' PNGs come from a sparse, credential-less checkout of `shots`) ->
 # publish (tools/push_shots.sh, the ONLY job here with contents: write).
 # workflow_dispatch ONLY (collaborators). Every input reaches the shell through env: variables only.
@@ -30,7 +33,143 @@ permissions:
   contents: read
 
 jobs:
+  # Phone media (docs/devicelab.md "Publishing phone media"): images / video cannot be scanned automatically, so
+  # only runs whose spec `media` says "cleared": true get anything copied (card_page.py refuses media without it).
+  # Copies ONLY Test Lab's screenshot PNGs (metadata chunks stripped) + video.mp4 (re-muxed, metadata dropped)
+  # + frames sampled from it; never logcat or any other file. The devicelab artifact itself is left as it is.
+  media:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      ids: ${{ steps.p.outputs.ids }}
+      artifact: report-media-${{ github.run_number }}-a${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Media runs (cleared)
+        id: p0
+        env:
+          SPEC: ${{ inputs.spec }}
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          [ "${#SPEC}" -le 20000 ] || fail "spec is ${#SPEC} chars (max 20000)"
+          printf '%s' "$SPEC" > spec.json
+          out=$(python3 tools/card_page.py --spec spec.json --run-ids --media-plan plan_all.json 2>&1) ||
+            fail "$(printf '%s' "$out" | tail -1 | cut -c1-300)"
+          sparse=''
+          for id in $(python3 -c 'import json; print(" ".join(p["id"] for p in json.load(open("plan_all.json"))))'); do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] || fail 'bad run id'
+            sparse+="shots/$id"$'\n'
+          done
+          { echo 'sparse<<SPARSE_EOF'; printf '%s' "$sparse"; echo 'SPARSE_EOF'; } >> "$GITHUB_OUTPUT"
+
+      # what is already published for those runs (read-only, no credentials kept)
+      - uses: actions/checkout@v4
+        if: steps.p0.outputs.sparse != ''
+        with:
+          ref: shots
+          path: shotsrc
+          persist-credentials: false
+          sparse-checkout: ${{ steps.p0.outputs.sparse }}
+
+      # a run already published (shots/<id>/devicelab.json) is left out unless its media says "replace": true:
+      # the report then shows the published files, and nothing of an earlier report is deleted
+      - name: Media plan (cleared, not yet published or replace)
+        id: p
+        if: steps.p0.outputs.sparse != ''
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          out=$(python3 tools/card_page.py --spec spec.json --run-ids --media-plan plan.json --shots-root shotsrc 2>&1) ||
+            fail "$(printf '%s' "$out" | tail -1 | cut -c1-300)"
+          printf '%s\n' "$out" | grep '^notice:' | tr -d '`' | sed 's/^notice: /- **phone media:** /' >> "$GITHUB_STEP_SUMMARY" || true
+          # one line per run: id, artifact name, digest (each re-checked against its pattern here)
+          python3 -c 'import json; [print(p["id"], p["artifact"], p["digest"]) for p in json.load(open("plan.json"))]' > plan.txt
+          ids=''
+          while read -r id name digest; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ && "$name" =~ ^devicelab-[0-9]{1,10}-a[0-9]{1,4}$ && "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+              fail 'bad media plan line'
+            ids+="$id "
+          done < plan.txt
+          echo "ids=${ids% }" >> "$GITHUB_OUTPUT"
+          echo "phone media to copy: ${ids:-none}"
+
+      - uses: astral-sh/setup-uv@v6
+        if: steps.p.outputs.ids != ''
+
+      # each id must be a devicelab.yml run of THIS repo (so its shots/<id>/ can never be an inspect run's folder).
+      # The artifact is EXACTLY the one the operator eye-checked: its name and digest come from the spec; the zip is
+      # downloaded by artifact id and refused unless its sha256 = that digest (tools/devicelab_media.py --extract).
+      - name: Fetch the cleared devicelab artifacts
+        if: steps.p.outputs.ids != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          mkdir -p art
+          # fd 3: no command inside the loop can eat the plan lines from stdin
+          while read -r -u 3 id name digest; do
+            path=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .path) || fail "run $id: not a run of this repo"
+            [ "$path" = .github/workflows/devicelab.yml ] || fail "run $id is not a devicelab.yml run: media is only for phone runs"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id/artifacts?per_page=100" > "art/$id.list.json" ||
+              fail "run $id: cannot list its artifacts"
+            aid=$(python3 -I -c '
+          import json, sys
+          name, digest = sys.argv[2], sys.argv[3]
+          hits = [a for a in json.load(open(sys.argv[1]))["artifacts"] if a.get("name") == name]
+          if len(hits) != 1: sys.exit(f"artifact {name} not found in that run")
+          a = hits[0]
+          if a.get("expired"): sys.exit(f"artifact {name} has expired (14 days); media already published stays on shots")
+          if a.get("digest") != digest: sys.exit(f"artifact {name}: digest mismatch: not the bytes that were cleared")
+          print(int(a["id"]))' "art/$id.list.json" "$name" "$digest" 2>&1) || fail "run $id: $aid"
+            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$aid/zip" > "art/$id.zip" || fail "run $id: download of $name failed"
+            out=$(uv run --script tools/devicelab_media.py --extract "art/$id.zip" --digest "$digest" --dest "art/$id" 2>&1) ||
+              fail "run $id: $(printf '%s' "$out" | tail -1 | cut -c1-200)"
+            echo "run $id: $name ($digest): $out"
+          done 3< plan.txt
+
+      - name: Copy + strip the media (tools/devicelab_media.py)
+        if: steps.p.outputs.ids != ''
+        run: |
+          fail() { echo "::error::$1"; echo "**REPORT FAILED:** \`$(printf '%s' "$1" | tr -d '`')\`" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null ||
+            { sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null; } || fail 'ffmpeg install failed'
+          err=$(uv run --script tools/devicelab_media.py --plan plan.json --artifacts art --out media 2>&1) ||
+            fail "$(printf '%s' "$err" | tail -1 | cut -c1-300)"
+          echo "$err"
+          printf '%s\n' "$err" | grep '^shots/' | tr -d '`' | sed 's/^/- **phone media:** /' >> "$GITHUB_STEP_SUMMARY" || true
+          # only images, video and devicelab.json may leave this job
+          extra=$(find media -type f ! \( -name '*.png' -o -name 'video.mp4' -o -name 'devicelab.json' \) -print -quit)
+          [ -z "$extra" ] || fail 'an unexpected file type in the media folders'
+
+      # devicelab.json = the only text published from here (facts from the already redacted + scanned artifact):
+      # the same two scans as devicelab.yml's; a hit = nothing is published
+      - name: Privacy scan (devicelab.json)
+        if: steps.p.outputs.ids != ''
+        run: |
+          rc=0
+          python3 tools/privacy_check.py --files media/*/devicelab.json || rc=1
+          python3 tools/ftl_redact.py --check media/*/devicelab.json || rc=1
+          [ "$rc" = 0 ] || echo '**REPORT FAILED:** privacy scan of devicelab.json (nothing published)' >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Upload the media folders
+        if: steps.p.outputs.ids != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-media-${{ github.run_number }}-a${{ github.run_attempt }}
+          path: media/
+          retention-days: 14
+          if-no-files-found: error
+
   render:
+    needs: media
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -79,6 +218,23 @@ jobs:
           path: shotsrc
           persist-credentials: false
           sparse-checkout: ${{ steps.v.outputs.sparse }}
+
+      - uses: actions/download-artifact@v4
+        if: needs.media.outputs.ids != ''
+        with:
+          name: ${{ needs.media.outputs.artifact }}
+          path: media
+
+      # this report's phone media replace those runs' folders in the local shots view (what publish will push)
+      - name: Phone media into the shots view
+        if: needs.media.outputs.ids != ''
+        env:
+          IDS: ${{ needs.media.outputs.ids }}
+        run: |
+          for id in $IDS; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] || { echo '::error::bad run id'; exit 1; }
+            rm -rf "shotsrc/shots/$id"; mkdir -p "shotsrc/shots/$id"; cp -R "media/$id/." "shotsrc/shots/$id/"
+          done
 
       - uses: astral-sh/setup-uv@v6
 
@@ -132,7 +288,7 @@ jobs:
   # The ONLY job with write access: pushes shots/<slug>/ (index.html, TESTS.md, sheet.png) (tools/push_shots.sh, shared
   # with inspect.yml's shots job: fresh fetch + commit + push, jittered retries, never concurrency-cancelled).
   publish:
-    needs: render
+    needs: [media, render]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -149,15 +305,35 @@ jobs:
           name: ${{ needs.render.outputs.artifact }}
           path: pub
 
-      - name: Push to branch shots (shots/<slug>/)
+      - uses: actions/download-artifact@v4
+        if: needs.media.outputs.ids != ''
+        with:
+          name: ${{ needs.media.outputs.artifact }}
+          path: media
+
+      # Order so that a re-run of the failed job converges: (1) refuse an existing slug (no overwrite) BEFORE anything
+      # is pushed; (2) each phone run's shots/<run_id>/ (overwrite: re-pushing the same files = "nothing changed");
+      # (3) the report LAST, so a failed media push leaves no report pointing at missing files.
+      - name: Push to branch shots (phone media shots/<run_id>/, then the report shots/<slug>/)
         env:
           TOKEN: ${{ github.token }}
           SLUG: ${{ needs.render.outputs.slug }}
           OVERWRITE: ${{ inputs.overwrite }}
+          IDS: ${{ needs.media.outputs.ids }}
         run: |
           mode=no-overwrite; [ "$OVERWRITE" != 'true' ] || mode=overwrite
+          if [ "$mode" = no-overwrite ]; then
+            rc=0; bash tools/push_shots.sh pub "$SLUG" check || rc=$?
+            [ "$rc" != 3 ] || echo "**NOT PUBLISHED:** shots/$SLUG/ already exists; re-run with overwrite or another slug (nothing pushed)" >> "$GITHUB_STEP_SUMMARY"
+            [ "$rc" = 0 ] || exit "$rc"
+          fi
+          for id in $IDS; do
+            [[ "$id" =~ ^[1-9][0-9]{0,19}$ ]] || { echo '::error::bad run id'; exit 1; }
+            bash tools/push_shots.sh "media/$id" "$id" overwrite ||
+              { echo "**NOT PUBLISHED:** shots/$id/ (phone media) push failed; re-run the failed job" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          done
           rc=0; bash tools/push_shots.sh pub "$SLUG" "$mode" || rc=$?
-          [ "$rc" != 3 ] || echo "**NOT PUBLISHED:** shots/$SLUG/ already exists; re-run with overwrite or another slug" >> "$GITHUB_STEP_SUMMARY"
+          [ "$rc" != 3 ] || echo "**NOT PUBLISHED:** shots/$SLUG/ appeared meanwhile; re-run with overwrite or another slug" >> "$GITHUB_STEP_SUMMARY"
           exit "$rc"
 
       - name: Summary (URLs)

@@ -26,6 +26,7 @@ One reusable workflow, not one repo per question.
   scans everything it uploads, fails closed: `tools/ftl_redact.py`). Screenshots/video are read by hand after each run.
 - `.github/workflows/report.yml` + `tools/card_page.py`: publish a report (index.html, TESTS.md, sheet.png) to `shots`.
   `.github/workflows/matrix.yml`: several build.yml runs at once.
+- `tools/devicelab_media.py`: report.yml's `media` job: cleared devicelab screenshots / video / frames -> `shots/<run_id>/` (docs/devicelab.md "Publishing phone media").
 - `tools/privacy_check.py` + `.github/workflows/privacy.yml` (alarm: scans the pushed tree on every push, and ALL branches incl. `shots` after each inspect / report run)
   + `.privacy-allow` (manual clears, see Privacy check).
 - `tests/`: local regression guards (no CI job); run line at the top of each file (`uv run --no-project tests/test_*.py`, `bash tests/inject_test.sh`).
