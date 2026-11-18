@@ -16,7 +16,7 @@
 <meta name="twitter:image" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/embed.png">
 <meta name="theme-color" content="#2b6cb0">
 <meta name="description" content="Pixel 5 (Adreno 620) runs: the KivyMD M3 ripple sets its shader after creating its Fbo. Passing the shader at creation stopped the crash; removing the stencil did not.">
-<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:16px;background:#111;color:#eee}a{color:#8cf}img{max-width:100%;height:auto;display:block;margin:8px 0}section{border-top:1px solid #444;margin-top:24px}p{margin:4px 0}pre{background:#222;padding:8px;overflow-x:auto;white-space:pre-wrap}.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}video{max-width:100%;width:360px;display:block;margin:8px 0}.summary{background:#1b2533;border:1px solid #2b6cb0;padding:8px 8px 8px 32px}.summary pre{background:#0b0f14}</style>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:16px;background:#111;color:#eee}a{color:#8cf}img{max-width:100%;height:auto;display:block;margin:8px 0}section{border-top:1px solid #444;margin-top:24px}p{margin:4px 0}pre{background:#222;padding:8px;overflow-x:auto;white-space:pre-wrap}.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}video{max-width:100%;width:360px;display:block;margin:8px 0}.summary{background:#1b2533;border:1px solid #2b6cb0;padding:8px 8px 8px 32px}.summary pre{background:#0b0f14}table.run{border-collapse:collapse;margin:8px 0;max-width:100%}table.run th,table.run td{border:1px solid #444;padding:4px 8px;text-align:left;vertical-align:top}table.run th{white-space:nowrap;color:#bbb;font-weight:600}.badge{display:inline-block;border-radius:4px;padding:0 8px;font-size:.75em;vertical-align:middle;color:#fff}.badge.crash{background:#c53030}.badge.clean{background:#2f855a}tr.crash th,tr.crash td{background:#3d1a1a}tr.clean th,tr.clean td{background:#173b26}</style>
 </head>
 <body>
 <h1>controlP on Android: round 3, crash cause found</h1>
@@ -29,11 +29,11 @@
 <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/sheet.png"><img src="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/sheet.png" alt="contact sheet"></a>
 <section>
 <h2>What crashes</h2>
-<p>The crash is in KivyMD&#x27;s M3 ripple, not in your code and not in BoxShadow.
-In KivyMD master (a00c10c), RectangularRippleBehavior and CircularRippleBehavior are aliases of the M3 classes, so list items, icon buttons and switches all use M3CommonRipple.
-M3CommonRipple.init_fbos creates an Fbo, and set_shader then assigns shader.fs on it.
-kivy/kivy#8098 found that this order breaks on Adreno GPUs, and fixed BoxShadow by passing fs= to Fbo() at creation.
-On the Pixel 5 the app died a few ms after a ripple drew, inside libGLESv2_adreno.so, under Kivy&#x27;s fbo / vbo code (S0).</p>
+<p>The crash is in KivyMD&#x27;s M3 ripple, not in your code and not in BoxShadow.</p>
+<p>In KivyMD master (a00c10c), RectangularRippleBehavior and CircularRippleBehavior are aliases of the M3 classes, so list items, icon buttons and switches all use M3CommonRipple.</p>
+<p>M3CommonRipple.init_fbos creates an Fbo, and set_shader then assigns shader.fs on it.</p>
+<p>kivy/kivy#8098 found that this order breaks on Adreno GPUs, and fixed BoxShadow by passing fs= to Fbo() at creation.</p>
+<p>On the Pixel 5 the app died a few ms after a ripple drew, inside libGLESv2_adreno.so, under Kivy&#x27;s fbo / vbo code (S0).</p>
 <ul>
 <li><a href="https://github.com/kivy/kivy/pull/8098">kivy/kivy#8098</a></li>
 <li><a href="https://github.com/kivymd/KivyMD/issues/1900">kivymd/KivyMD#1900</a></li>
@@ -41,12 +41,12 @@ On the Pixel 5 the app died a few ms after a ripple drew, inside libGLESv2_adren
 </section>
 <section>
 <h2>What we changed, one thing per run</h2>
-<p>All five runs below ran on a physical Pixel 5 (Android 11) in Google Firebase Test Lab, through our new devicelab.yml flow (scripted taps, screenshots, video, logcat), not on an emulator.
-All runs used your cad5d5c with an offline demo device. S0 is the shipped config (shadows off). T1, T2, W and OD come from one later build with shadows ON, and each changes one ripple setting through app_config.json.
-T1 creates the ripple&#x27;s Fbo with the shader: CLEAN, also on the other-devices screen (OD).
-T2 removes the ripple&#x27;s stencil but keeps the late shader: CRASH. So the stencil is not the cause.
-W turns ripples off on list items: CLEAN. This is the workaround you found.
-W drew no ripple at all (the home card&#x27;s ripple is off by default), so it does not show that list rows are special.</p>
+<p>All five runs below ran on a physical Pixel 5 (Android 11) in Google Firebase Test Lab, through our new devicelab.yml flow (scripted taps, screenshots, video, logcat), not on an emulator.</p>
+<p>All runs used your cad5d5c with an offline demo device. S0 is the shipped config (shadows off). T1, T2, W and OD come from one later build with shadows ON, and each changes one ripple setting through app_config.json.</p>
+<p>T1 creates the ripple&#x27;s Fbo with the shader: CLEAN, also on the other-devices screen (OD).</p>
+<p>T2 removes the ripple&#x27;s stencil but keeps the late shader: CRASH. So the stencil is not the cause.</p>
+<p>W turns ripples off on list items: CLEAN. This is the workaround you found.</p>
+<p>W drew no ripple at all (the home card&#x27;s ripple is off by default), so it does not show that list rows are special.</p>
 <ul>
 <li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/main/patches/controlp/bisect_toggles.diff">bisect toggles (patch)</a></li>
 <li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/main/docs/bisect.md">how the bisect works</a></li>
@@ -83,10 +83,10 @@ W drew no ripple at all (the home card&#x27;s ripple is off by default), so it d
 </section>
 <section>
 <h2>How we got here: flow 2, top-down (Nov 17-18)</h2>
-<p>Flow 2, top-down (Nov 17): switch groups of your UI off. B1 (input-list effects + Explore list off) = CLEAN. B3 (input-list effects off only) = CRASH, but it moved to the first tap on an Explore row that still had its ripple.
-Then a source check: every stock ripple has its own Fbo with the shader set after creation.
-Flow 2, one change per run (Nov 18): S0 shipped = CRASH; T1 shader at Fbo creation = CLEAN; T2 no stencil = CRASH; W list ripples off = CLEAN; OD (T1 build, other-devices screen) = CLEAN.
-Planned but not run: BIS2-BIS4, DL2, B2, a B1 repeat (replaced by OD).</p>
+<p>Flow 2, top-down (Nov 17): switch groups of your UI off. B1 (input-list effects + Explore list off) = CLEAN. B3 (input-list effects off only) = CRASH, but it moved to the first tap on an Explore row that still had its ripple.</p>
+<p>Then a source check: every stock ripple has its own Fbo with the shader set after creation.</p>
+<p>Flow 2, one change per run (Nov 18): S0 shipped = CRASH; T1 shader at Fbo creation = CLEAN; T2 no stencil = CRASH; W list ripples off = CLEAN; OD (T1 build, other-devices screen) = CLEAN.</p>
+<p>Planned but not run: BIS2-BIS4, DL2, B2, a B1 repeat (replaced by OD).</p>
 <pre class="mermaid">flowchart TD
   B1{&quot;B1 · 44167819420&lt;br/&gt;input-list effects + Explore list off&lt;br/&gt;CLEAN&quot;}
   B2[&quot;B2 · B1 + bottom bar + top bar off&lt;br/&gt;not run&quot;]
@@ -121,40 +121,43 @@ Planned but not run: BIS2-BIS4, DL2, B2, a B1 repeat (replaced by OD).</p>
 </section>
 <section>
 <h2>Why other_devices still crashes for you</h2>
-<p>Your commit sets ripple_effect = False on MenuItem, InputItem and OtherDevicesView.
-MenuItem and InputItem are list items, so it works there.
-OtherDevicesView is an MDScreen, which has no ripple, so the line does nothing.
-Its 10 MDIconButtons and 2 MDSwitch thumbs keep their M3 ripples, and the entry button in the bottom bar ripples too.
-Two ways out: switch the ripple off for the whole app (one patch of M3CommonRipple), or use the T1 change (Fbo created with the shader), which keeps the ripple.</p>
+<p>Your commit sets ripple_effect = False on MenuItem, InputItem and OtherDevicesView.</p>
+<p>MenuItem and InputItem are list items, so it works there.</p>
+<p>OtherDevicesView is an MDScreen, which has no ripple, so the line does nothing.</p>
+<p>Its 10 MDIconButtons and 2 MDSwitch thumbs keep their M3 ripples, and the entry button in the bottom bar ripples too.</p>
+<p>Two ways out: switch the ripple off for the whole app (one patch of M3CommonRipple), or use the T1 change (Fbo created with the shader), which keeps the ripple.</p>
 </section>
 <section>
 <h2>Limits</h2>
-<p>One run per variant, and no run of the unmodified ripple on the shadows-on build (the closest are DL1, an earlier shadows-on build that crashed twice, and T2); both crashing runs died on the first list-row tap, but a single clean run is still one run.
-The Pixel 5 has an Adreno 620, your Mi 9T an Adreno 618: same driver family, not proof for the 618.
-You reported the other-devices crash; we did not run the other-devices taps on the shipped build, so we did not reproduce that one ourselves.
-The phone ran in Firebase Test Lab with scripted taps and a fake device, not your Pioneer.
-The screenshots above are from emulator checks; the phone screenshots were read by hand and are in each run&#x27;s artifact.
-Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;card&quot; links 404. Use each run&#x27;s Actions link instead.</p>
+<p>One run per variant, and no run of the unmodified ripple on the shadows-on build (the closest are DL1, an earlier shadows-on build that crashed twice, and T2); both crashing runs died on the first list-row tap, but a single clean run is still one run.</p>
+<p>The Pixel 5 has an Adreno 620, your Mi 9T an Adreno 618: same driver family, not proof for the 618.</p>
+<p>You reported the other-devices crash; we did not run the other-devices taps on the shipped build, so we did not reproduce that one ourselves.</p>
+<p>The phone ran in Firebase Test Lab with scripted taps and a fake device, not your Pioneer.</p>
+<p>Each phone run&#x27;s screenshots and video are shown under its own block; every image and video was looked at before publishing (8 frames per video, not every second).</p>
 </section>
 <section>
 <h2>Known gaps</h2>
-<p>1. No run of the unmodified ripple on the shadows-on build (T1&#x27;s build). Closest: DL1 (earlier shadows-on build, crashed twice) and T2 (same build, crashed). Close it: one run of the shipped config on that build on a physical Pixel 5 in Google Firebase Test Lab (form inputs only).
-2. Is it list rows, or any first ripple? Every crash was the first ripple drawn, and no late-shader ripple has ever survived on the Pixel 5. Close it: tap the top-bar power button (its own ripple, no list) before a list row, same Firebase Test Lab run as gap 1.
-3. GPU coverage: only an Adreno 620 was tested; #1900 has Adreno 506 and 750, your Mi 9T an Adreno 618. Close it: the S0 and T1 APKs on a physical Snapdragon Samsung in Google Firebase Test Lab (form inputs only).
-4. The fix only ran as an app-side patch (T1, code-identical to the KivyMD diff on desktop), never as KivyMD itself. Close it: build with KivyMD from a branch carrying the diff, then one physical-phone run in Google Firebase Test Lab.
-5. tilt_behavior.py in KivyMD sets its shader the same late way and runs on Android; untested, follow-up.</p>
+<ol><li>No run of the unmodified ripple on the shadows-on build (T1&#x27;s build). Closest: DL1 (earlier shadows-on build, crashed twice) and T2 (same build, crashed). Close it: one run of the shipped config on that build on a physical Pixel 5 in Google Firebase Test Lab (form inputs only).</li><li>Is it list rows, or any first ripple? Every crash was the first ripple drawn, and no late-shader ripple has ever survived on the Pixel 5. Close it: tap the top-bar power button (its own ripple, no list) before a list row, same Firebase Test Lab run as gap 1.</li><li>GPU coverage: only an Adreno 620 was tested; #1900 has Adreno 506 and 750, your Mi 9T an Adreno 618. Close it: the S0 and T1 APKs on a physical Snapdragon Samsung in Google Firebase Test Lab (form inputs only).</li><li>The fix only ran as an app-side patch (T1, code-identical to the KivyMD diff on desktop), never as KivyMD itself. Close it: build with KivyMD from a branch carrying the diff, then one physical-phone run in Google Firebase Test Lab.</li><li>tilt_behavior.py in KivyMD sets its shader the same late way and runs on Android; untested, follow-up.</li></ol>
+</section>
+<section id="runs">
+<h2>Runs</h2>
+<p>Firebase Test Lab runs on Google&#x27;s lab phones. Every image and video here was looked at before publishing.</p>
 </section>
 <section id="run-44281216274">
-<h2>S0 shipped config, Pixel 5</h2>
-<p>Question: controlP cad5d5c + offline demo device, shadows off, KivyMD ripple as shipped, real Pixel 5: does it crash?</p>
-<p>Result: CRASH: SIGSEGV fault addr 0x40 in libGLESv2_adreno.so &lt;- vbo &lt;- instructions &lt;- compiler &lt;- fbo, 35 ms after the Music Server row tap opened the album list.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-4-S0-a1 of matrix run 44177064426 (shadows off). Taps: home card -&gt; input -&gt; Music Server -&gt; album -&gt; track.</p>
-<p>Phone run (Firebase Test Lab): device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 93 s · 7 screenshot(s) · video 97 s · 2 crash report file(s) · 5 scripted tap(s)</p>
-<p><a href="#recreate-run-44281216274">how to recreate</a></p>
+<h3>S0 shipped config, Pixel 5 <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>SIGSEGV fault addr 0x40 in libGLESv2_adreno.so &lt;- vbo &lt;- instructions &lt;- compiler &lt;- fbo, 35 ms after the Music Server row tap opened the album list.</td></tr>
+<tr><th scope="row">What we learned</th><td>The shipped ripple crashes on this phone with no change, so the bug reproduces.</td></tr>
+<tr><th scope="row">Question</th><td>controlP cad5d5c + offline demo device, shadows off, KivyMD ripple as shipped, real Pixel 5: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-4-S0-a1 of matrix run 44177064426 (shadows off). Taps: home card -&gt; input -&gt; Music Server -&gt; album -&gt; track.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 93 s · 7 screenshot(s) · video 97 s · 2 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44281216274">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4">video (mp4)</a> · <a href="#recreate-run-44281216274">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4"></video>
 <p>Frames sampled from the video:</p>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/strip.png" alt="video frames" loading="lazy"></a>
-<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4"></video>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/0.png" alt="0.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/1.png" alt="1.png" loading="lazy"></a>
@@ -164,22 +167,22 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/5.png" alt="5.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/6.png" alt="6.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44281216274">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4">video (mp4)</a></li>
-</ul>
 </section>
 <section id="run-44282302495">
-<h2>T1 shader at Fbo creation</h2>
-<p>Question: (Build with shadows ON.) Your app, M3CommonRipple.init_fbos patched to pass fs= when the Fbo is created (never set later): does it crash?</p>
-<p>Result: CLEAN: home -&gt; input -&gt; explore -&gt; play. 45 ripples built with fs=. No tombstone, no fatal signal.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T1-a1 of matrix run 44185768900 (shadows on, app_config ripple_fbo_fs=create). Same taps as S0.</p>
-<p>Phone run (Firebase Test Lab): device redfin-30-en-portrait · Test Lab outcome Passed · test time 85 s · 13 screenshot(s) · video 89 s · 0 crash report file(s) · 5 scripted tap(s)</p>
-<p><a href="#recreate-run-44282302495">how to recreate</a></p>
+<h3>T1 shader at Fbo creation <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home -&gt; input -&gt; explore -&gt; play. 45 ripples built with fs=. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>Giving the shader when the Fbo is created stops the crash. This is the fix.</td></tr>
+<tr><th scope="row">Question</th><td>(Build with shadows ON.) Your app, M3CommonRipple.init_fbos patched to pass fs= when the Fbo is created (never set later): does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T1-a1 of matrix run 44185768900 (shadows on, app_config ripple_fbo_fs=create). Same taps as S0.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 85 s · 13 screenshot(s) · video 89 s · 0 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44282302495">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4">video (mp4)</a> · <a href="#recreate-run-44282302495">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4"></video>
 <p>Frames sampled from the video:</p>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/strip.png" alt="video frames" loading="lazy"></a>
-<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4"></video>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/0.png" alt="0.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/1.png" alt="1.png" loading="lazy"></a>
@@ -195,22 +198,22 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/11.png" alt="11.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/12.png" alt="12.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44282302495">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4">video (mp4)</a></li>
-</ul>
 </section>
 <section id="run-44283462781">
-<h2>T2 ripple without stencil</h2>
-<p>Question: (Build with shadows ON.) Ripple with no Stencil instructions (Fbo kept, shader still set after creation): does it crash?</p>
-<p>Result: CRASH: the stencil-free ripple drew on the tapped row, then SIGSEGV 0x40 5 ms later, same frames as S0.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T2-a1 of matrix run 44185768900 (shadows on, app_config ripple_stencil=false). Same taps as S0.</p>
-<p>Phone run (Firebase Test Lab): device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 88 s · 8 screenshot(s) · video 92 s · 2 crash report file(s) · 5 scripted tap(s)</p>
-<p><a href="#recreate-run-44283462781">how to recreate</a></p>
+<h3>T2 ripple without stencil <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>the stencil-free ripple drew on the tapped row, then SIGSEGV 0x40 5 ms later, same frames as S0.</td></tr>
+<tr><th scope="row">What we learned</th><td>Removing the stencil doesn&#x27;t help, so the stencil is not the cause.</td></tr>
+<tr><th scope="row">Question</th><td>(Build with shadows ON.) Ripple with no Stencil instructions (Fbo kept, shader still set after creation): does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T2-a1 of matrix run 44185768900 (shadows on, app_config ripple_stencil=false). Same taps as S0.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 88 s · 8 screenshot(s) · video 92 s · 2 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44283462781">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4">video (mp4)</a> · <a href="#recreate-run-44283462781">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4"></video>
 <p>Frames sampled from the video:</p>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/strip.png" alt="video frames" loading="lazy"></a>
-<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4"></video>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/0.png" alt="0.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/1.png" alt="1.png" loading="lazy"></a>
@@ -221,22 +224,22 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/6.png" alt="6.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/7.png" alt="7.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44283462781">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4">video (mp4)</a></li>
-</ul>
 </section>
 <section id="run-44284566596">
-<h2>W list ripples off</h2>
-<p>Question: (Build with shadows ON.) Ripples off on all list items: does it crash?</p>
-<p>Result: CLEAN: home -&gt; input -&gt; explore -&gt; play. No tombstone, no fatal signal.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-W-a1 of matrix run 44185768900 (shadows on, app_config list_ripple=false). Same taps as S0.</p>
-<p>Phone run (Firebase Test Lab): device redfin-30-en-portrait · Test Lab outcome Passed · 13 screenshot(s) · video 88 s · 0 crash report file(s) · 5 scripted tap(s)</p>
-<p><a href="#recreate-run-44284566596">how to recreate</a></p>
+<h3>W list ripples off <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home -&gt; input -&gt; explore -&gt; play. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>With list ripples off there&#x27;s no crash, so your workaround works. But it drew no ripple at all.</td></tr>
+<tr><th scope="row">Question</th><td>(Build with shadows ON.) Ripples off on all list items: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-W-a1 of matrix run 44185768900 (shadows on, app_config list_ripple=false). Same taps as S0.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · 13 screenshot(s) · video 88 s · 0 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44284566596">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4">video (mp4)</a> · <a href="#recreate-run-44284566596">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4"></video>
 <p>Frames sampled from the video:</p>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/strip.png" alt="video frames" loading="lazy"></a>
-<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4"></video>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/0.png" alt="0.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/1.png" alt="1.png" loading="lazy"></a>
@@ -252,22 +255,22 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/11.png" alt="11.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/12.png" alt="12.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44284566596">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4">video (mp4)</a></li>
-</ul>
 </section>
 <section id="run-44285595799">
-<h2>OD other devices, T1 build</h2>
-<p>Question: (Build with shadows ON.) T1 build, taps into the other-devices screen: amplifier switch, volume-plus twice, cd player switch: does it crash?</p>
-<p>Result: CLEAN: other_devices reached, both switches on, volume-plus ripple seen twice. No tombstone, no fatal signal.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T1-a1 of matrix run 44185768900. Taps: home card -&gt; input -&gt; other devices -&gt; amplifier switch -&gt; volume-plus x2 -&gt; cd player switch.</p>
-<p>Phone run (Firebase Test Lab): device redfin-30-en-portrait · Test Lab outcome Passed · test time 94 s · 17 screenshot(s) · video 85 s · 0 crash report file(s) · 7 scripted tap(s)</p>
-<p><a href="#recreate-run-44285595799">how to recreate</a></p>
+<h3>OD other devices, T1 build <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>other_devices reached, both switches on, volume-plus ripple seen twice. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>The fix also holds on the other-devices screen (icon buttons, switches).</td></tr>
+<tr><th scope="row">Question</th><td>(Build with shadows ON.) T1 build, taps into the other-devices screen: amplifier switch, volume-plus twice, cd player switch: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Physical phone: Pixel 5 (redfin), Android 11, in Google Firebase Test Lab (our devicelab.yml flow, new since Nov 17; not an emulator). APK build-5-T1-a1 of matrix run 44185768900. Taps: home card -&gt; input -&gt; other devices -&gt; amplifier switch -&gt; volume-plus x2 -&gt; cd player switch.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 94 s · 17 screenshot(s) · video 85 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44285595799">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4">video (mp4)</a> · <a href="#recreate-run-44285595799">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4"></video>
 <p>Frames sampled from the video:</p>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/strip.png" alt="video frames" loading="lazy"></a>
-<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4"></video>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/0.png" alt="0.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/1.png" alt="1.png" loading="lazy"></a>
@@ -287,66 +290,62 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/15.png" alt="15.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/16.png" alt="16.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44285595799">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4">video (mp4)</a></li>
-</ul>
 </section>
 <section id="run-44191222864">
-<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191222864/">T1 emulator gate</a></h2>
-<p>Question: Before the phone: does the T1 APK run the whole tap path on an emulator?</p>
-<p>Result: PASS: home -&gt; input -&gt; explore -&gt; play, no traceback. An emulator cannot show the driver crash.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: artifact build-5-T1-a1 of run 44185768900 · api_level 35 · cache off</p>
-<p><a href="#recreate-run-44191222864">how to recreate</a></p>
+<h3>T1 emulator gate <span class="badge clean">PASS</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home -&gt; input -&gt; explore -&gt; play, no traceback. An emulator cannot show the driver crash.</td></tr>
+<tr><th scope="row">What we learned</th><td>The tap path works on this APK, so the phone run tests the ripple, not a broken tap script.</td></tr>
+<tr><th scope="row">Question</th><td>Before the phone: does the T1 APK run the whole tap path on an emulator?</td></tr>
+<tr><th scope="row">Where it ran</th><td>GitHub Actions emulator (inspect.yml; x86_64, software-rendered; profile pixel_6, API 35)</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-5-T1-a1 of run 44185768900 · api_level 35 · cache off</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191222864">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191222864/">run card</a> · <a href="#recreate-run-44191222864">how to recreate</a></td></tr>
+</table>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44191222864/05_tap_540_360.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44191222864/05_tap_540_360.png" alt="05_tap_540_360.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191222864">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191222864/">run card</a></li>
-</ul>
 </section>
 <section id="run-44191256830">
-<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191256830/">T2 emulator gate</a></h2>
-<p>Question: Before the phone: does the T2 APK run the whole tap path on an emulator?</p>
-<p>Result: PASS, no traceback.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: artifact build-5-T2-a1 of run 44185768900 · api_level 35 · cache off</p>
-<p><a href="#recreate-run-44191256830">how to recreate</a></p>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191256830">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191256830/">run card</a></li>
-</ul>
+<h3>T2 emulator gate <span class="badge clean">PASS</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>no traceback.</td></tr>
+<tr><th scope="row">What we learned</th><td>The tap path works on this APK, so the phone run tests the ripple, not a broken tap script.</td></tr>
+<tr><th scope="row">Question</th><td>Before the phone: does the T2 APK run the whole tap path on an emulator?</td></tr>
+<tr><th scope="row">Where it ran</th><td>GitHub Actions emulator (inspect.yml; x86_64, software-rendered; profile pixel_6, API 35)</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-5-T2-a1 of run 44185768900 · api_level 35 · cache off</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191256830">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191256830/">run card</a> · <a href="#recreate-run-44191256830">how to recreate</a></td></tr>
+</table>
 </section>
 <section id="run-44191289871">
-<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191289871/">W emulator gate</a></h2>
-<p>Question: Before the phone: does the W APK run the whole tap path on an emulator?</p>
-<p>Result: PASS, no traceback.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: artifact build-5-W-a1 of run 44185768900 · api_level 35 · cache off</p>
-<p><a href="#recreate-run-44191289871">how to recreate</a></p>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191289871">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191289871/">run card</a></li>
-</ul>
+<h3>W emulator gate <span class="badge clean">PASS</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>no traceback.</td></tr>
+<tr><th scope="row">What we learned</th><td>The tap path works on this APK, so the phone run tests the ripple, not a broken tap script.</td></tr>
+<tr><th scope="row">Question</th><td>Before the phone: does the W APK run the whole tap path on an emulator?</td></tr>
+<tr><th scope="row">Where it ran</th><td>GitHub Actions emulator (inspect.yml; x86_64, software-rendered; profile pixel_6, API 35)</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-5-W-a1 of run 44185768900 · api_level 35 · cache off</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44191289871">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44191289871/">run card</a> · <a href="#recreate-run-44191289871">how to recreate</a></td></tr>
+</table>
 </section>
 <section id="run-44209486472">
-<h2><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44209486472/">OD emulator gate</a></h2>
-<p>Question: Do the other-devices taps land (Pixel 5 screen profile, Android 11)?</p>
-<p>Result: PASS: other_devices reached, amplifier switch on, volume-plus ripple, cd player switch on.</p>
-<p>Evidence: APK · proven</p>
-<p>Settings: artifact build-5-T1-a1 of run 44185768900 · api_level 30 · cache off</p>
-<p><a href="#recreate-run-44209486472">how to recreate</a></p>
+<h3>OD emulator gate <span class="badge clean">PASS</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>other_devices reached, amplifier switch on, volume-plus ripple, cd player switch on.</td></tr>
+<tr><th scope="row">What we learned</th><td>The tap path works on this APK, so the phone run tests the ripple, not a broken tap script.</td></tr>
+<tr><th scope="row">Question</th><td>Do the other-devices taps land (Pixel 5 screen profile, Android 11)?</td></tr>
+<tr><th scope="row">Where it ran</th><td>GitHub Actions emulator (inspect.yml; x86_64, software-rendered; profile pixel_5, API 30)</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-5-T1-a1 of run 44185768900 · api_level 30 · cache off</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44209486472">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44209486472/">run card</a> · <a href="#recreate-run-44209486472">how to recreate</a></td></tr>
+</table>
 <div class="shots">
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/03_tap_996_2139.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/03_tap_996_2139.png" alt="03_tap_996_2139.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/06_tap_868_434.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/06_tap_868_434.png" alt="06_tap_868_434.png" loading="lazy"></a>
 <a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/07_tap_876_672.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/07_tap_876_672.png" alt="07_tap_876_672.png" loading="lazy"></a>
 </div>
-<ul>
-<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44209486472">run</a></li>
-<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44209486472/">run card</a></li>
-</ul>
 </section>
 <section id="how-to-recreate">
 <h2>How to recreate</h2>
@@ -354,33 +353,78 @@ Known dead links: the 5 phone runs (Test Lab) have no card page, so their &quot;
 </section>
 <section id="recreate-run-44281216274">
 <h2>Recreate run 44281216274</h2>
-<p>Run 44281216274 (S0 shipped config, Pixel 5): settings not recorded.</p>
-<p>It has no inputs.json (runs before 2026-11-16 did not write one).</p>
-<p>The report spec gives no recreate inputs for it either.</p>
+<p>Run 44281216274 (S0 shipped config, Pixel 5).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>controlP bisect S0 defaults shadows off from matrix run 44177064426 on Pixel 5 Android 11</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44177064426</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-4-S0-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;controlP bisect S0 defaults shadows off from matrix run 44177064426 on Pixel 5 Android 11&quot;,
+ &quot;artifact_run&quot;: &quot;44177064426&quot;,
+ &quot;artifact_name&quot;: &quot;build-4-S0-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
 </section>
 <section id="recreate-run-44282302495">
 <h2>Recreate run 44282302495</h2>
-<p>Run 44282302495 (T1 shader at Fbo creation): settings not recorded.</p>
-<p>It has no inputs.json (runs before 2026-11-16 did not write one).</p>
-<p>The report spec gives no recreate inputs for it either.</p>
+<p>Run 44282302495 (T1 shader at Fbo creation).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>controlP bisect T1 ripple_fbo_fs=create from matrix run 44185768900 on Pixel 5 Android 11</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T1-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;controlP bisect T1 ripple_fbo_fs=create from matrix run 44185768900 on Pixel 5 Android 11&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T1-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
 </section>
 <section id="recreate-run-44283462781">
 <h2>Recreate run 44283462781</h2>
-<p>Run 44283462781 (T2 ripple without stencil): settings not recorded.</p>
-<p>It has no inputs.json (runs before 2026-11-16 did not write one).</p>
-<p>The report spec gives no recreate inputs for it either.</p>
+<p>Run 44283462781 (T2 ripple without stencil).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>controlP bisect T2 ripple_stencil=false from matrix run 44185768900 on Pixel 5 Android 11</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T2-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;controlP bisect T2 ripple_stencil=false from matrix run 44185768900 on Pixel 5 Android 11&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T2-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
 </section>
 <section id="recreate-run-44284566596">
 <h2>Recreate run 44284566596</h2>
-<p>Run 44284566596 (W list ripples off): settings not recorded.</p>
-<p>It has no inputs.json (runs before 2026-11-16 did not write one).</p>
-<p>The report spec gives no recreate inputs for it either.</p>
+<p>Run 44284566596 (W list ripples off).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>controlP bisect W list_ripple=false from matrix run 44185768900 on Pixel 5 Android 11</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-W-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;controlP bisect W list_ripple=false from matrix run 44185768900 on Pixel 5 Android 11&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-W-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
 </section>
 <section id="recreate-run-44285595799">
 <h2>Recreate run 44285595799</h2>
-<p>Run 44285595799 (OD other devices, T1 build): settings not recorded.</p>
-<p>It has no inputs.json (runs before 2026-11-16 did not write one).</p>
-<p>The report spec gives no recreate inputs for it either.</p>
+<p>Run 44285595799 (OD other devices, T1 build).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>controlP OD other_devices taps (T1 build) from matrix run 44185768900 on Pixel 5 Android 11</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T1-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;controlP OD other_devices taps (T1 build) from matrix run 44185768900 on Pixel 5 Android 11&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T1-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8&quot;
+}
+JSON</pre>
 </section>
 <section id="recreate-run-44191222864">
 <h2>Recreate run 44191222864</h2>
