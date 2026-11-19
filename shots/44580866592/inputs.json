@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44580866592",
+ "inputs": {
+  "label": "controlP gate GB2 list row twice with leave/return (pixel_5 API 30) from matrix run 44324237484",
+  "apk_url": "",
+  "artifact_run": "44324237484",
+  "artifact_name": "build-6-B0S-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "30",
+  "profile": "pixel_5",
+  "taps": "540,2000,5;540,600,8;540,800,8;1000,232,8;540,800,8;1000,232,8;540,800,10",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
