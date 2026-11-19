@@ -1,0 +1,27 @@
+{
+ "workflow": "inspect.yml",
+ "run_id": "44589267460",
+ "inputs": {
+  "label": "stub_kivymd showcase gate mPRFS topbar+next x2 (pixel_5 API 30) from matrix run 44584005765",
+  "apk_url": "",
+  "artifact_run": "44584005765",
+  "artifact_name": "build-8-mPRFS-a1",
+  "repo": "",
+  "ref": "HEAD",
+  "app": "",
+  "archs": "",
+  "extra": "",
+  "app_config": "",
+  "static_only": "false",
+  "api_level": "30",
+  "profile": "pixel_5",
+  "taps": "540,2000,5;1000,232,8;540,1700,8;540,900,6;540,900,6;1000,232,8;540,1700,8",
+  "launch_wait": "45",
+  "cache": "off",
+  "image": "",
+  "fail_on_death": "false",
+  "patches": "",
+  "sidecar": "",
+  "adb_reverse": ""
+ }
+}
