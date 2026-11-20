@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src &#x27;none&#x27;; img-src https://raw.githubusercontent.com https://accelquasardragon.github.io; media-src https://raw.githubusercontent.com https://accelquasardragon.github.io; style-src &#x27;unsafe-inline&#x27;; script-src https://cdn.jsdelivr.net/npm/mermaid@12.2.0/dist/mermaid.min.js &#x27;sha256-vuGX3Uad30Q3juapJ4URtB+hkG/352vahUbvW5Sm7vU=&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>controlP on Android: round 3b, fix tested inside KivyMD</title>
+<meta property="og:type" content="website">
+<meta property="og:title" content="controlP on Android: round 3b, fix tested inside KivyMD">
+<meta property="og:description" content="KivyMD&#x27;s M3 ripple sets its shader after creating its Fbo; that crashes Adreno 620/619 phones. Shader at creation (fork e0f0ca0): clean 6/6; shipped KivyMD and #1907: crashed.">
+<meta property="og:image" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/sheet.png">
+<meta property="og:url" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="controlP on Android: round 3b, fix tested inside KivyMD">
+<meta name="twitter:description" content="KivyMD&#x27;s M3 ripple sets its shader after creating its Fbo; that crashes Adreno 620/619 phones. Shader at creation (fork e0f0ca0): clean 6/6; shipped KivyMD and #1907: crashed.">
+<meta name="twitter:image" content="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/sheet.png">
+<meta name="theme-color" content="#2b6cb0">
+<meta name="description" content="KivyMD&#x27;s M3 ripple sets its shader after creating its Fbo; that crashes Adreno 620/619 phones. Shader at creation (fork e0f0ca0): clean 6/6; shipped KivyMD and #1907: crashed.">
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:16px;background:#111;color:#eee}a{color:#8cf}img{max-width:100%;height:auto;display:block;margin:8px 0}section{border-top:1px solid #444;margin-top:24px}p{margin:4px 0}pre{background:#222;padding:8px;overflow-x:auto;white-space:pre-wrap}.shots{display:flex;flex-wrap:wrap;gap:8px}.shots img{max-width:240px}video{max-width:100%;width:360px;display:block;margin:8px 0}.summary{background:#1b2533;border:1px solid #2b6cb0;padding:8px 8px 8px 32px}.summary pre{background:#0b0f14}table.run{border-collapse:collapse;margin:8px 0;max-width:100%}table.run th,table.run td{border:1px solid #444;padding:4px 8px;text-align:left;vertical-align:top}table.run th{white-space:nowrap;color:#bbb;font-weight:600}.badge{display:inline-block;border-radius:4px;padding:0 8px;font-size:.75em;vertical-align:middle;color:#fff}.badge.crash{background:#c53030}.badge.clean{background:#2f855a}tr.crash th,tr.crash td{background:#3d1a1a}tr.clean th,tr.clean td{background:#173b26}</style>
+</head>
+<body>
+<h1>controlP on Android: round 3b, fix tested inside KivyMD</h1>
+<ul class="key"><li>1. THE BUG: KivyMD&#x27;s M3 ripple creates its Fbo with Kivy&#x27;s default shader, then assigns the ripple shader via fbo.shader.fs (kivymd/uix/behaviors/ripple_behavior.py:701-702, master a00c10c). On Adreno GPUs (Pixel 5: Adreno 620, Android 11; Galaxy A52 5G: Adreno 619, Android 14) the app crashes in the GPU driver right after the first ripple draws.</li><li>2. THE FIX: give the shader to Fbo() when it is created, as kivy/kivy#8098 did for BoxShadow. Load the source first (ripple.glsl with the &quot;$HEADER$\n&quot; prefix; RIPPLE_FS_STRING is still None at that point), then: self.fbo = Fbo(size=[50] * 2, group=&quot;m3_ripple_behavior&quot;, fs=fs), and drop the later self.set_shader(self.fbo). Tested as KivyMD fork commit e0f0ca0.</li><li>3. THE RUNS (physical phones in Firebase Test Lab, links below): shipped KivyMD or PR #1907 = CRASH in every run (S0, B0S, R1 on the Pixel 5; D1 on the Galaxy A52; mC0 = a ~200-line KivyMD-only app). KivyMD with the fix = CLEAN 6 of 6 (R2, R3, R4 on the Pixel 5; D2, D3 on the Galaxy A52; mPRFS in the minimal app).</li><li>NOT the stencil (T2): a ripple with no Stencil instructions but the late shader still crashed, 5 ms after it drew.</li><li>NOT fixed by KivyMD PR #1907 (R1): it fixes the 0-px Fbo error (#1894) but still sets the shader late, and crashed 353 ms after the first ripple.</li><li>Workaround (W, list ripples off): clean but no ripple at all; on OtherDevicesView your ripple_effect=False does nothing (see below). S0 = your cad5d5c, before that commit.</li><li>Shadows are not needed: the crash happened with shadows off (S0) and on (B0S, DL1). Your builds already had shadows off.</li></ul>
+<p>KivyMD&#x27;s M3 ripple sets its shader after creating its Fbo; that crashes Adreno 620/619 phones. Shader at creation (fork e0f0ca0): clean 6/6; shipped KivyMD and #1907: crashed.</p>
+<p><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/shots/shots/report-round3b-2026-11-20/TESTS.md">TESTS.md (every run in a table)</a></p>
+<img src="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/sheet.png" alt="controlP on Android: round 3b, fix tested inside KivyMD">
+<section>
+<h2>What crashes</h2>
+<p>The crash is in KivyMD&#x27;s M3 ripple, not in your code and not in BoxShadow.</p>
+<p>In KivyMD master (a00c10c) list items, icon buttons and switches all use M3CommonRipple (the old ripple classes are aliases of it).</p>
+<p>Its init_fbos creates an Fbo, then set_shader assigns shader.fs on it: the order kivy/kivy#8098 found breaks on Adreno, fixed there by passing fs= to Fbo().</p>
+<p>On both phones the app died a few ms after a ripple drew, in libGLESv2_adreno.so under Kivy&#x27;s fbo / vbo code.</p>
+<ul>
+<li><a href="https://github.com/kivy/kivy/pull/8098">kivy/kivy#8098</a></li>
+<li><a href="https://github.com/kivymd/KivyMD/issues/1900">kivymd/KivyMD#1900</a></li>
+</ul>
+</section>
+<section>
+<h2>What we changed, one thing per run (Nov 18)</h2>
+<p>Nov 18, Pixel 5 (Android 11) in Google Firebase Test Lab via our devicelab.yml flow, not an emulator; your cad5d5c with an offline demo device.</p>
+<p>S0 = shipped config (shadows off). T1, T2, W, OD = one later shadows-ON build, each changing one ripple setting via app_config.json.</p>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/main/patches/controlp/bisect_toggles.diff">bisect toggles (patch)</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/main/docs/bisect.md">how the bisect works</a></li>
+</ul>
+</section>
+<section>
+<h2>How we got here: flow 1, bottom-up (Nov 17)</h2>
+<p>Flow 1, bottom-up (Nov 17): DL1 full app on the Pixel 5 = CRASH. A 5-APK kit of stock widgets (BIS5: KivyMD + BoxShadow, 20 screen switches) = CLEAN. DL1 again = CRASH, so the trigger is in the app, not in stock widgets alone. We switched to top-down.</p>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44154307029">DL1</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44153044950">BIS5</a></li>
+</ul>
+</section>
+<section>
+<h2>How we got here: flow 2, top-down (Nov 17-18)</h2>
+<p>Flow 2, top-down (Nov 17): switch groups of your UI off. B1 (input-list effects + Explore list off) = CLEAN. B3 (input-list effects off only) = CRASH, but it moved to the first tap on an Explore row that still had its ripple.</p>
+<p>Then a source check: every stock ripple has its own Fbo with the shader set after creation.</p>
+<p>Flow 2, one change per run (Nov 18): S0 shipped = CRASH; T1 shader at Fbo creation = CLEAN; T2 no stencil = CRASH; W list ripples off = CLEAN; OD (T1 build, other-devices screen) = CLEAN.</p>
+<p>Planned but not run: BIS2-BIS4, DL2, B2, a B1 repeat (replaced by OD).</p>
+<pre class="mermaid">flowchart TD
+  B1{&quot;B1 · 44167819420&lt;br/&gt;input-list effects + Explore list off&lt;br/&gt;CLEAN&quot;}
+  B2[&quot;B2 · B1 + bottom bar + top bar off&lt;br/&gt;not run&quot;]
+  B3{&quot;B3 · 44171527960&lt;br/&gt;input-list effects off only&lt;br/&gt;CRASH, moved to Explore row tap&quot;}
+  R1[&quot;Reading: crash follows a tap on a&lt;br/&gt;list row with its ripple on&quot;]
+  SRC[&quot;Source check: every stock ripple =&lt;br/&gt;own Fbo, shader set after creation&quot;]
+  S0[&quot;S0 · 44281216274&lt;br/&gt;shadows off (as shipped)&lt;br/&gt;CRASH&quot;]
+  T1{&quot;T1 · 44282302495&lt;br/&gt;ripple Fbo gets shader at creation&lt;br/&gt;CLEAN&quot;}
+  T2[&quot;T2 · 44283462781&lt;br/&gt;ripple stencil mask off&lt;br/&gt;CRASH&quot;]
+  W[&quot;W · 44284566596&lt;br/&gt;all list ripples off&lt;br/&gt;CLEAN&quot;]
+  ODT1[&quot;OD_T1 · 44285595799&lt;br/&gt;T1 build, taps into other_devices&lt;br/&gt;CLEAN&quot;]
+  ODW[&quot;OD_W · W build&lt;br/&gt;not run&quot;]
+  B1R[&quot;B1 repeat&lt;br/&gt;not run, replaced by OD&quot;]
+  CAUSE[&quot;Cause: shader set after Fbo creation&lt;br/&gt;in KivyMD M3 ripple (kivy#8098 pattern)&lt;br/&gt;fix = pass fs= to Fbo()&quot;]
+  B1 -. crash .-&gt; B2
+  B1 -- clean --&gt; B3
+  B3 -- crash --&gt; R1 --&gt; SRC
+  SRC --&gt; S0 --&gt; T1 --&gt; T2 --&gt; W
+  W -.-&gt; B1R
+  T1 -- clean --&gt; ODT1
+  T1 -. crash .-&gt; ODW
+  S0 -- &quot;crash: shadow Fbo not needed&quot; --&gt; CAUSE
+  T2 -- &quot;crash: stencil not needed&quot; --&gt; CAUSE
+  T1 -- &quot;clean: late shader needed&quot; --&gt; CAUSE
+  W -- &quot;clean: workaround works&quot; --&gt; CAUSE
+  classDef notrun stroke-dasharray: 5 5,color:#888;
+  class B2,ODW,B1R notrun;</pre>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44167819420">B1</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44171527960">B3</a></li>
+</ul>
+</section>
+<section>
+<h2>Round 3b: the fix inside KivyMD (Nov 19-20)</h2>
+<p>T1 patched the ripple from inside your app. To test KivyMD itself, one cold build put three KivyMD versions into the same app (shadows on): C0 = master a00c10c, P1907 = PR #1907, PRFS = our fork commit e0f0ca0 (only the fix above).</p>
+<p>A second cold build did the same for a ~200-line KivyMD-only app (none of your code): mC0 and mPRFS.</p>
+<p>Results: the runs R1-R4, D1-D3, mC0, mPRFS below.</p>
+<ul>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44580816339">controlP A/B build</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44584005765">minimal app build</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/tree/main/stub_kivymd">minimal app source</a></li>
+<li><a href="https://github.com/AccelQuasarDragon/KivyMD/commit/e0f0ca0c2c25a62d409543482e840bbd9133a3d8">fork commit e0f0ca0</a></li>
+<li><a href="https://github.com/kivymd/KivyMD/pull/1907">KivyMD PR #1907</a></li>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/">round 3 report (Nov 18)</a></li>
+</ul>
+</section>
+<section>
+<h2>Why other_devices still crashes for you</h2>
+<p>Your commit sets ripple_effect = False on MenuItem, InputItem and OtherDevicesView.</p>
+<p>MenuItem and InputItem are list items, so it works there.</p>
+<p>OtherDevicesView is an MDScreen, which has no ripple, so the line does nothing.</p>
+<p>Its 10 MDIconButtons and 2 MDSwitch thumbs keep their M3 ripples, and the entry button in the bottom bar ripples too.</p>
+<p>Two ways out: switch the ripple off for the whole app (one patch of M3CommonRipple), or use KivyMD with the fix (R4: other-devices taps clean), which keeps the ripple.</p>
+</section>
+<section>
+<h2>Built from clean</h2>
+<p>Every APK here came from a cold build: a fresh GitHub runner with no cache (cache=off), so no old .buildozer state.</p>
+<p>To do the same on your PC: delete the project&#x27;s .buildozer folder and bin/, then run buildozer android debug.</p>
+</section>
+<section>
+<h2>Limits</h2>
+<p>1 to 3 runs per variant. The T1 clean result (the app-side patch) is a single run; the KivyMD fork was clean 6 of 6 on two phones.</p>
+<p>Tested GPUs: Adreno 620 (Pixel 5) and Adreno 619 (Galaxy A52). Your Mi 9T has an Adreno 618: same driver family, not tested.</p>
+<p>The other-devices taps never ran on the shipped build, so we did not reproduce your other-devices crash ourselves.</p>
+<p>The phones ran in Firebase Test Lab with scripted taps and a fake device, not your Pioneer.</p>
+<p>Every APK passed an emulator tap-path check first (not listed, to keep the page short).</p>
+<p>Every published image and video was looked at first (sampled frames, not every second).</p>
+</section>
+<section>
+<h2>Known gaps</h2>
+<ol><li>CLOSED (Nov 19, B0S): the shipped ripple crashes on a shadows-on build too, and on ANY first ripple (the top-bar power button), not only list rows.</li><li>PARTLY CLOSED (Nov 20): a second GPU, Adreno 619 (D1 crash, D2 and D3 clean). #1900 also has Adreno 506 and 750, your Mi 9T an Adreno 618: untested.</li><li>CLOSED (Nov 19-20): the fix ran as KivyMD itself (fork e0f0ca0), not only as an app-side patch: R2, R3, R4, D2, D3, mPRFS.</li><li>tilt_behavior.py in KivyMD sets its shader the same late way and runs on Android; untested, follow-up.</li></ol>
+</section>
+<section id="runs">
+<h2>Runs</h2>
+<p>Firebase Test Lab runs on Google&#x27;s lab phones. Every image and video here was looked at before publishing.</p>
+</section>
+<section id="run-44281216274">
+<h3>S0 shipped config, Pixel 5 <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>SIGSEGV fault addr 0x40 in libGLESv2_adreno.so &lt;- vbo &lt;- instructions &lt;- compiler &lt;- fbo, 35 ms after the Music Server row tap opened the album list.</td></tr>
+<tr><th scope="row">What we learned</th><td>The shipped ripple crashes on this phone with no change, so the bug reproduces.</td></tr>
+<tr><th scope="row">Question</th><td>controlP cad5d5c + offline demo device, shadows off, KivyMD ripple as shipped, real Pixel 5: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Cold build, matrix 44177064426: shipped config, shadows off.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 93 s · 7 screenshot(s) · video 97 s · 2 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44281216274">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4">video (mp4)</a> · <a href="#recreate-run-44281216274">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44281216274/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44281216274/6.png" alt="6.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44282302495">
+<h3>T1 shader at Fbo creation <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home -&gt; input -&gt; explore -&gt; play. 45 ripples built with fs=. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>Giving the shader when the Fbo is created stops the crash. This is the fix.</td></tr>
+<tr><th scope="row">Question</th><td>Your app, M3CommonRipple.init_fbos patched to pass fs= when the Fbo is created (never set later): does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Cold build, matrix 44185768900: shadows on, app_config ripple_fbo_fs=create.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 85 s · 13 screenshot(s) · video 89 s · 0 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44282302495">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4">video (mp4)</a> · <a href="#recreate-run-44282302495">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44282302495/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44282302495/12.png" alt="12.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44283462781">
+<h3>T2 ripple without stencil <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>the stencil-free ripple drew on the tapped row, then SIGSEGV 0x40 5 ms later, same frames as S0.</td></tr>
+<tr><th scope="row">What we learned</th><td>Removing the stencil doesn&#x27;t help, so the stencil is not the cause.</td></tr>
+<tr><th scope="row">Question</th><td>Ripple with no Stencil instructions (Fbo kept, shader still set after creation): does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Same build: app_config ripple_stencil=false.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 88 s · 8 screenshot(s) · video 92 s · 2 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44283462781">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4">video (mp4)</a> · <a href="#recreate-run-44283462781">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44283462781/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44283462781/7.png" alt="7.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44284566596">
+<h3>W list ripples off <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home -&gt; input -&gt; explore -&gt; play. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>With list ripples off there&#x27;s no crash, so your workaround works. But it drew no ripple at all.</td></tr>
+<tr><th scope="row">Question</th><td>Ripples off on all list items: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>Same build: app_config list_ripple=false.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · 13 screenshot(s) · video 88 s · 0 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44284566596">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4">video (mp4)</a> · <a href="#recreate-run-44284566596">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44284566596/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44284566596/12.png" alt="12.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44285595799">
+<h3>OD other devices, T1 build <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>other_devices reached, both switches on, volume-plus ripple seen twice. No tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>The fix also holds on the other-devices screen (icon buttons, switches).</td></tr>
+<tr><th scope="row">Question</th><td>T1 build, taps into the other-devices screen: amplifier switch, volume-plus twice, cd player switch: does it crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>T1 APK; taps into the other-devices screen.</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 94 s · 17 screenshot(s) · video 85 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44285595799">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4">video (mp4)</a> · <a href="#recreate-run-44285595799">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44285595799/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/12.png" alt="12.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/13.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/13.png" alt="13.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/14.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/14.png" alt="14.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/15.png" alt="15.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44285595799/16.png" alt="16.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44501582277">
+<h3>B0S shipped ripple, shadows on <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>SIGSEGV 0x40 in libGLESv2_adreno.so 0.36 s after the top-bar power tap (its own ripple, no list), same backtrace as S0.</td></tr>
+<tr><th scope="row">What we learned</th><td>Any first ripple crashes, not only list rows.</td></tr>
+<tr><th scope="row">Question</th><td>Fresh shadows-on build, ripple as shipped, power button first: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-6-B0S-a1 of run 44324237484 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 84 s · 8 screenshot(s) · video 88 s · 2 crash report file(s) · 5 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44501582277">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44501582277/video.mp4">video (mp4)</a> · <a href="#recreate-run-44501582277">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44501582277/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44501582277/7.png" alt="7.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44589140589">
+<h3>R1 KivyMD PR #1907 <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>SIGSEGV 0x40, adreno x4 &lt;- vbo &lt;- instructions &lt;- compiler, 353 ms after the first power tap.</td></tr>
+<tr><th scope="row">What we learned</th><td>#1907 fixes the 0-px Fbo error, not this crash.</td></tr>
+<tr><th scope="row">Question</th><td>KivyMD PR #1907 (dp(1) Fbo + clamp, shader still set late): crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-P1907-a1 of run 44580816339 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 106 s · 8 screenshot(s) · video 110 s · 2 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44589140589">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44589140589/video.mp4">video (mp4)</a> · <a href="#recreate-run-44589140589">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44589140589/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44589140589/7.png" alt="7.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44590309751">
+<h3>R2 KivyMD fs= fix, power x2 <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>power x2 (ripple circle drawn behind the icon), then Music Server row -&gt; album list -&gt; back, twice.</td></tr>
+<tr><th scope="row">What we learned</th><td>The fix inside KivyMD stops the crash, and the ripple still draws.</td></tr>
+<tr><th scope="row">Question</th><td>KivyMD fork e0f0ca0 (Fbo created with fs=), same taps as R1: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-PRFS-a1 of run 44580816339 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 102 s · 17 screenshot(s) · video 106 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44590309751">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44590309751/video.mp4">video (mp4)</a> · <a href="#recreate-run-44590309751">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44590309751/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/12.png" alt="12.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/13.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/13.png" alt="13.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/14.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/14.png" alt="14.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/15.png" alt="15.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44590309751/16.png" alt="16.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44591562998">
+<h3>R3 fs= fix, list row x3 <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>three list-row ripples, no tombstone, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>List-row ripples are fine with the fix.</td></tr>
+<tr><th scope="row">Question</th><td>Fork e0f0ca0, list-row ripple three times with leave/return: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-PRFS-a1 of run 44580816339 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 105 s · 17 screenshot(s) · video 97 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44591562998">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44591562998/video.mp4">video (mp4)</a> · <a href="#recreate-run-44591562998">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44591562998/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/12.png" alt="12.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/13.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/13.png" alt="13.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/14.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/14.png" alt="14.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/15.png" alt="15.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44591562998/16.png" alt="16.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44592679382">
+<h3>R4 fs= fix, other devices <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>other_devices reached, switch and icon-button ripples, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>The screen you reported is clean with the fix.</td></tr>
+<tr><th scope="row">Question</th><td>Fork e0f0ca0, the other-devices taps (switches, volume-plus x2): crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-PRFS-a1 of run 44580816339 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · 17 screenshot(s) · video 97 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44592679382">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44592679382/video.mp4">video (mp4)</a> · <a href="#recreate-run-44592679382">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44592679382/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/12.png" alt="12.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/13.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/13.png" alt="13.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/14.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/14.png" alt="14.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/15.png" alt="15.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44592679382/16.png" alt="16.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44716239758">
+<h3>D1 shipped ripple, Galaxy A52 <span class="badge crash">CRASH</span></h3>
+<table class="run">
+<tr class="crash"><th scope="row">Result</th><td>SIGSEGV 0x40 about 120 ms after the Music Server row tap, same backtrace as on the Pixel 5.</td></tr>
+<tr><th scope="row">What we learned</th><td>A second Adreno GPU (619) crashes the same way.</td></tr>
+<tr><th scope="row">Question</th><td>Shipped KivyMD (a00c10c) on a Galaxy A52 5G (Adreno 619, Android 14): crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device a52xq-34-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-C0-a1 of run 44580816339 · device a52xq API 34</td></tr>
+<tr><th scope="row">Test Lab</th><td>device a52xq-34-en-portrait · Test Lab outcome Failed (Application crashed) · test time 84 s · 8 screenshot(s) · video 91 s · 2 crash report file(s) · 4 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44716239758">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44716239758/video.mp4">video (mp4)</a> · <a href="#recreate-run-44716239758">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44716239758/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44716239758/7.png" alt="7.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44717304020">
+<h3>D2 fs= fix, Galaxy A52 <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>reached the track list, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>The fix holds on the Adreno 619.</td></tr>
+<tr><th scope="row">Question</th><td>Fork e0f0ca0 APK, same taps on the Galaxy A52: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device a52xq-34-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-PRFS-a1 of run 44580816339 · device a52xq API 34</td></tr>
+<tr><th scope="row">Test Lab</th><td>device a52xq-34-en-portrait · Test Lab outcome Passed · 11 screenshot(s) · video 86 s · 0 crash report file(s) · 4 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44717304020">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44717304020/video.mp4">video (mp4)</a> · <a href="#recreate-run-44717304020">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44717304020/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44717304020/10.png" alt="10.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44718163639">
+<h3>D3 fs= fix, Galaxy A52, repeat <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>reached the track list, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>Clean 2 of 2 on the A52.</td></tr>
+<tr><th scope="row">Question</th><td>D2 again: still clean?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device a52xq-34-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-7-PRFS-a1 of run 44580816339 · device a52xq API 34</td></tr>
+<tr><th scope="row">Test Lab</th><td>device a52xq-34-en-portrait · Test Lab outcome Passed · test time 80 s · 11 screenshot(s) · video 86 s · 0 crash report file(s) · 4 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44718163639">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44718163639/video.mp4">video (mp4)</a> · <a href="#recreate-run-44718163639">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44718163639/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44718163639/10.png" alt="10.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44719013412">
+<h3>mC0 minimal app, shipped ripple</h3>
+<table class="run">
+<tr><th scope="row">Result</th><td>CRASH during its first ripple (top-bar button tap), same backtrace.</td></tr>
+<tr><th scope="row">What we learned</th><td>KivyMD alone is enough to crash: no controlP code needed.</td></tr>
+<tr><th scope="row">Question</th><td>A ~200-line KivyMD-only app (none of your code), shipped KivyMD a00c10c: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-8-mC0-a1 of run 44584005765 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Failed (Application crashed) · test time 105 s · 6 screenshot(s) · video 109 s · 2 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44719013412">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44719013412/video.mp4">video (mp4)</a> · <a href="#recreate-run-44719013412">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44719013412/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719013412/5.png" alt="5.png" loading="lazy"></a>
+</div>
+</section>
+<section id="run-44719993437">
+<h3>mPRFS minimal app, fs= fix <span class="badge clean">CLEAN</span></h3>
+<table class="run">
+<tr class="clean"><th scope="row">Result</th><td>home, second, third, home, second; top-bar ripple x2, no fatal signal.</td></tr>
+<tr><th scope="row">What we learned</th><td>The fix works in the minimal app too.</td></tr>
+<tr><th scope="row">Question</th><td>Same minimal app with fork e0f0ca0: crash?</td></tr>
+<tr><th scope="row">Where it ran</th><td>Physical phone in Google Firebase Test Lab (devicelab.yml): device redfin-30-en-portrait, not an emulator</td></tr>
+<tr><th scope="row">Settings</th><td>artifact build-8-mPRFS-a1 of run 44584005765 · device redfin API 30</td></tr>
+<tr><th scope="row">Test Lab</th><td>device redfin-30-en-portrait · Test Lab outcome Passed · test time 97 s · 17 screenshot(s) · video 90 s · 0 crash report file(s) · 7 scripted tap(s)</td></tr>
+<tr><th scope="row">Evidence</th><td>APK · proven</td></tr>
+<tr><th scope="row">Links</th><td><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44719993437">Actions run</a> · <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/44719993437/video.mp4">video (mp4)</a> · <a href="#recreate-run-44719993437">how to recreate</a></td></tr>
+</table>
+<video controls preload="metadata" playsinline src="https://accelquasardragon.github.io/kivy-helper-repro/shots/44719993437/video.mp4"></video>
+<p>Frames sampled from the video:</p>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/strip.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/strip.png" alt="video frames" loading="lazy"></a>
+<div class="shots">
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/0.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/0.png" alt="0.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/1.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/1.png" alt="1.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/2.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/2.png" alt="2.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/3.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/3.png" alt="3.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/4.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/4.png" alt="4.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/5.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/5.png" alt="5.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/6.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/6.png" alt="6.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/7.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/7.png" alt="7.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/8.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/8.png" alt="8.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/9.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/9.png" alt="9.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/10.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/10.png" alt="10.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/11.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/11.png" alt="11.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/12.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/12.png" alt="12.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/13.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/13.png" alt="13.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/14.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/14.png" alt="14.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/15.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/15.png" alt="15.png" loading="lazy"></a>
+<a href="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/16.png"><img src="https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44719993437/16.png" alt="16.png" loading="lazy"></a>
+</div>
+</section>
+<section id="how-to-recreate">
+<h2>How to recreate</h2>
+<p>Each run below: its settings, step by step in the Actions tab, and the same as one gh command.</p>
+</section>
+<section id="recreate-run-44281216274">
+<h2>Recreate run 44281216274</h2>
+<p>Run 44281216274 (S0 shipped config, Pixel 5).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>S0 shipped config, Pixel 5</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44177064426</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-4-S0-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;S0 shipped config, Pixel 5&quot;,
+ &quot;artifact_run&quot;: &quot;44177064426&quot;,
+ &quot;artifact_name&quot;: &quot;build-4-S0-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44282302495">
+<h2>Recreate run 44282302495</h2>
+<p>Run 44282302495 (T1 shader at Fbo creation).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>T1 shader at Fbo creation</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T1-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;T1 shader at Fbo creation&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T1-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44283462781">
+<h2>Recreate run 44283462781</h2>
+<p>Run 44283462781 (T2 ripple without stencil).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>T2 ripple without stencil</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T2-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;T2 ripple without stencil&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T2-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44284566596">
+<h2>Recreate run 44284566596</h2>
+<p>Run 44284566596 (W list ripples off).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>W list ripples off</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-W-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;W list ripples off&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-W-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,360,8;540,360,10&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44285595799">
+<h2>Recreate run 44285595799</h2>
+<p>Run 44285595799 (OD other devices, T1 build).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>OD other devices, T1 build</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44185768900</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-5-T1-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;OD other devices, T1 build&quot;,
+ &quot;artifact_run&quot;: &quot;44185768900&quot;,
+ &quot;artifact_name&quot;: &quot;build-5-T1-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44501582277">
+<h2>Recreate run 44501582277</h2>
+<p>Run 44501582277 (B0S shipped ripple, shadows on).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>B0S power then row</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44324237484</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-6-B0S-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;1000,232,8;540,800,8;540,800,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;B0S power then row&quot;,
+ &quot;artifact_run&quot;: &quot;44324237484&quot;,
+ &quot;artifact_name&quot;: &quot;build-6-B0S-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;1000,232,8;540,800,8;540,800,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44589140589">
+<h2>Recreate run 44589140589</h2>
+<p>Run 44589140589 (R1 KivyMD PR #1907).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>R1 P1907 taps A</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-P1907-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;1000,232,8;1000,232,8;540,800,8;1000,232,8;1000,232,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;R1 P1907 taps A&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-P1907-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;1000,232,8;1000,232,8;540,800,8;1000,232,8;1000,232,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44590309751">
+<h2>Recreate run 44590309751</h2>
+<p>Run 44590309751 (R2 KivyMD fs= fix, power x2).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>R2 PRFS taps A</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-PRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;1000,232,8;1000,232,8;540,800,8;1000,232,8;1000,232,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;R2 PRFS taps A&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-PRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;1000,232,8;1000,232,8;540,800,8;1000,232,8;1000,232,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44591562998">
+<h2>Recreate run 44591562998</h2>
+<p>Run 44591562998 (R3 fs= fix, list row x3).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>R3 PRFS taps B</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-PRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;1000,232,8;540,800,8;1000,232,8;540,800,10</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;R3 PRFS taps B&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-PRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;1000,232,8;540,800,8;1000,232,8;540,800,10&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44592679382">
+<h2>Recreate run 44592679382</h2>
+<p>Run 44592679382 (R4 fs= fix, other devices).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>R4 PRFS other devices</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-PRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;R4 PRFS other devices&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-PRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;996,2229,8;876,288,5;868,434,5;868,434,5;876,672,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44716239758">
+<h2>Recreate run 44716239758</h2>
+<p>Run 44716239758 (D1 shipped ripple, Galaxy A52).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>D1 C0 Galaxy A52</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-C0-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,800,8</code></li><li>Set the field &quot;device&quot; to: <code>a52xq</code></li><li>Set the field &quot;version&quot; to: <code>34</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;D1 C0 Galaxy A52&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-C0-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,800,8&quot;,
+ &quot;device&quot;: &quot;a52xq&quot;,
+ &quot;version&quot;: &quot;34&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44717304020">
+<h2>Recreate run 44717304020</h2>
+<p>Run 44717304020 (D2 fs= fix, Galaxy A52).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>D2 PRFS Galaxy A52</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-PRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,800,8</code></li><li>Set the field &quot;device&quot; to: <code>a52xq</code></li><li>Set the field &quot;version&quot; to: <code>34</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;D2 PRFS Galaxy A52&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-PRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,800,8&quot;,
+ &quot;device&quot;: &quot;a52xq&quot;,
+ &quot;version&quot;: &quot;34&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44718163639">
+<h2>Recreate run 44718163639</h2>
+<p>Run 44718163639 (D3 fs= fix, Galaxy A52, repeat).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>D3 PRFS Galaxy A52 repeat</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44580816339</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-7-PRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;540,600,8;540,800,8;540,800,8</code></li><li>Set the field &quot;device&quot; to: <code>a52xq</code></li><li>Set the field &quot;version&quot; to: <code>34</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;D3 PRFS Galaxy A52 repeat&quot;,
+ &quot;artifact_run&quot;: &quot;44580816339&quot;,
+ &quot;artifact_name&quot;: &quot;build-7-PRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;540,600,8;540,800,8;540,800,8&quot;,
+ &quot;device&quot;: &quot;a52xq&quot;,
+ &quot;version&quot;: &quot;34&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44719013412">
+<h2>Recreate run 44719013412</h2>
+<p>Run 44719013412 (mC0 minimal app, shipped ripple).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>mC0 minimal app</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44584005765</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-8-mC0-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;1000,232,8;540,1735,8;540,900,6;540,900,6;1000,232,8;540,1735,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;mC0 minimal app&quot;,
+ &quot;artifact_run&quot;: &quot;44584005765&quot;,
+ &quot;artifact_name&quot;: &quot;build-8-mC0-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;1000,232,8;540,1735,8;540,900,6;540,900,6;1000,232,8;540,1735,8&quot;
+}
+JSON</pre>
+</section>
+<section id="recreate-run-44719993437">
+<h2>Recreate run 44719993437</h2>
+<p>Run 44719993437 (mPRFS minimal app, fs= fix).</p>
+<p>These settings come from the report spec, not from the run itself.</p>
+<p>A new run tests the same APK artifact again on a lab phone: it reproduces the inputs, not that exact run.</p>
+<ol><li>Open the Actions tab of AccelQuasarDragon/kivy-helper-repro, then pick &quot;device lab&quot; (devicelab.yml) in the workflow list on the left.</li><li>Click &quot;Run workflow&quot; (top right of the run list); keep the branch &quot;main&quot;.</li><li>Set the field &quot;label&quot; to: <code>mPRFS minimal app</code></li><li>Set the field &quot;artifact_run&quot; to: <code>44584005765</code></li><li>Set the field &quot;artifact_name&quot; to: <code>build-8-mPRFS-a1</code></li><li>Set the field &quot;taps&quot; to: <code>540,2000,5;1000,232,8;540,1735,8;540,900,6;540,900,6;1000,232,8;540,1735,8</code></li><li>Leave every other field at its default.</li><li>Click the green &quot;Run workflow&quot; button.</li></ol>
+<pre>gh workflow run devicelab.yml --repo AccelQuasarDragon/kivy-helper-repro --ref main --json &lt;&lt;&#x27;JSON&#x27;
+{
+ &quot;label&quot;: &quot;mPRFS minimal app&quot;,
+ &quot;artifact_run&quot;: &quot;44584005765&quot;,
+ &quot;artifact_name&quot;: &quot;build-8-mPRFS-a1&quot;,
+ &quot;taps&quot;: &quot;540,2000,5;1000,232,8;540,1735,8;540,900,6;540,900,6;1000,232,8;540,1735,8&quot;
+}
+JSON</pre>
+</section>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@12.2.0/dist/mermaid.min.js" integrity="sha384-8xUhuLNMjW/cI2Dacg3DR4WliYznvIg0LVG1stctThKD/YVrJFI9TNCFxft5NYgp" crossorigin="anonymous"></script>
+<script>mermaid.initialize({startOnLoad:true,securityLevel:'strict',theme:'dark'});</script>
+</body>
+</html>
