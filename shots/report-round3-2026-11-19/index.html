@@ -20,13 +20,20 @@
 </head>
 <body>
 <h1>controlP on Android: round 3, crash cause found</h1>
-<ul class="key"><li>1. THE BUG: KivyMD&#x27;s M3 ripple creates its Fbo with Kivy&#x27;s default shader, then swaps in the ripple shader via fbo.shader.fs (kivymd/uix/behaviors/ripple_behavior.py:701-702, master a00c10c). On a Pixel 5 (Adreno, Android 11) the app crashed in the GPU driver after a list-row ripple drew. In every crashing run it was the first ripple the app drew (the home card&#x27;s ripple is off by default).</li><li>2. THE FIX: give the shader to Fbo() when it is created, as kivy/kivy#8098 did for BoxShadow. Load the source first (ripple.glsl with the &quot;$HEADER$
+<ul class="key"><li>UPDATE Nov 20: newer report (round 3b: the fix tested inside KivyMD, on a Pixel 5 and a Galaxy A52, 6 of 6 clean) at https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/ . This page is kept as it was on Nov 18.</li><li>1. THE BUG: KivyMD&#x27;s M3 ripple creates its Fbo with Kivy&#x27;s default shader, then swaps in the ripple shader via fbo.shader.fs (kivymd/uix/behaviors/ripple_behavior.py:701-702, master a00c10c). On a Pixel 5 (Adreno, Android 11) the app crashed in the GPU driver after a list-row ripple drew. In every crashing run it was the first ripple the app drew (the home card&#x27;s ripple is off by default).</li><li>2. THE FIX: give the shader to Fbo() when it is created, as kivy/kivy#8098 did for BoxShadow. Load the source first (ripple.glsl with the &quot;$HEADER$
 &quot; prefix; the module&#x27;s RIPPLE_FS_STRING is still None at that point), then: self.fbo = Fbo(size=[50] * 2, group=&quot;m3_ripple_behavior&quot;, fs=fs), and drop the later self.set_shader(self.fbo).</li><li>3. THE RUNS (Pixel 5, Android 11, one run each; links in the table below): CRASH with the unmodified ripple (S0) and with the stencil off but the same late shader (T2). CLEAN with the Fbo created with fs= (T1), also on the icon buttons and switches of the app&#x27;s other-devices screen (OD). S0 is an older build with shadows off; T1, T2 and OD are one build with shadows on.</li><li>NOT the stencil (T2): a ripple with no Stencil instructions but the late shader still crashed, 5 ms after it drew.</li><li>Workaround also works (W): ripples off on list items (W drew no ripple at all). Your per-class ripple_effect=False works on MenuItem and InputItem, but NOT on OtherDevicesView: it is a screen, so its buttons and switches keep their ripples.</li><li>Shadows are not needed: the crash happened with shadows off (S0) and earlier with shadows on (DL1). Your builds already had shadows off.</li><li>Limits: one run per variant; Pixel 5 = Adreno 620, your Mi 9T = Adreno 618 (same driver family, not the same GPU).</li></ul>
 <p>Pixel 5 (Adreno 620) runs: the KivyMD M3 ripple sets its shader after creating its Fbo. Passing the shader at creation stopped the crash; removing the stencil did not.</p>
 <p><a href="https://github.com/AccelQuasarDragon/kivy-helper-repro/blob/shots/shots/report-round3-2026-11-19/TESTS.md">TESTS.md (every run in a table)</a></p>
 <img src="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/embed.png" alt="controlP on Android: round 3, crash cause found">
 <p>All screenshots (contact sheet):</p>
 <a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/sheet.png"><img src="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3-2026-11-19/sheet.png" alt="contact sheet"></a>
+<section>
+<h2>Newer report (Nov 20)</h2>
+<p>Round 3b closes gaps 1, 2 and 4 below and half of gap 3.</p>
+<ul>
+<li><a href="https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/">round 3b report</a></li>
+</ul>
+</section>
 <section>
 <h2>What crashes</h2>
 <p>The crash is in KivyMD&#x27;s M3 ripple, not in your code and not in BoxShadow.</p>

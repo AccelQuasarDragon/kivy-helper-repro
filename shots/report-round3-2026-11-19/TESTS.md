@@ -1,5 +1,6 @@
 # controlP on Android:​ round 3, crash cause found
 
+- UPDATE Nov 20:​ newer report \(round 3b:​ the fix tested inside KivyMD, on a Pixel 5 and a Galaxy A52, 6 of 6 clean\) at https:​//accelquasardragon\.github\.io/kivy\-helper\-repro/shots/report\-round3b\-2026\-11\-20/ \. This page is kept as it was on Nov 18\.
 - 1\. THE BUG:​ KivyMD's M3 ripple creates its Fbo with Kivy's default shader, then swaps in the ripple shader via fbo\.shader\.fs \(kivymd/uix/behaviors/ripple\_behavior\.py:​701\-702, master a00c10c\)\. On a Pixel 5 \(Adreno, Android 11\) the app crashed in the GPU driver after a list\-row ripple drew\. In every crashing run it was the first ripple the app drew \(the home card's ripple is off by default\)\.
 - 2\. THE FIX:​ give the shader to Fbo\(\) when it is created, as kivy/kivy\#8098 did for BoxShadow\. Load the source first \(ripple\.glsl with the &quot;\$HEADER\$ &quot; prefix; the module's RIPPLE\_FS\_STRING is still None at that point\), then:​ self\.fbo = Fbo\(size=\[50\] \* 2, group=&quot;m3\_ripple\_behavior&quot;, fs=fs\), and drop the later self\.set\_shader\(self\.fbo\)\.
 - 3\. THE RUNS \(Pixel 5, Android 11, one run each; links in the table below\):​ CRASH with the unmodified ripple \(S0\) and with the stencil off but the same late shader \(T2\)\. CLEAN with the Fbo created with fs= \(T1\), also on the icon buttons and switches of the app's other\-devices screen \(OD\)\. S0 is an older build with shadows off; T1, T2 and OD are one build with shadows on\.
@@ -224,6 +225,12 @@ All published screenshots:
 | **Links** | [Actions run](https://github.com/AccelQuasarDragon/kivy-helper-repro/actions/runs/44209486472) · [run card](https://accelquasardragon.github.io/kivy-helper-repro/shots/44209486472/) · [how to recreate](#recreate-run-44209486472) |
 
 [03\_tap\_996\_2139](https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/03_tap_996_2139.png) [06\_tap\_868\_434](https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/06_tap_868_434.png) [07\_tap\_876\_672](https://raw.githubusercontent.com/AccelQuasarDragon/kivy-helper-repro/shots/shots/44209486472/07_tap_876_672.png)
+
+## Newer report \(Nov 20\)
+
+Round 3b closes gaps 1, 2 and 4 below and half of gap 3\.
+
+- [round 3b report](https://accelquasardragon.github.io/kivy-helper-repro/shots/report-round3b-2026-11-20/)
 
 ## What crashes
 
