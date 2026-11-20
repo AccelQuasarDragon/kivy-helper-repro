@@ -1,0 +1,38 @@
+{
+ "workflow": "devicelab.yml",
+ "run_id": "44501582277",
+ "images": [
+  "0.png",
+  "1.png",
+  "2.png",
+  "3.png",
+  "4.png",
+  "5.png",
+  "6.png",
+  "7.png"
+ ],
+ "frames": [
+  "frame_01.png",
+  "frame_02.png",
+  "frame_03.png",
+  "frame_04.png",
+  "frame_05.png",
+  "frame_06.png",
+  "frame_07.png",
+  "frame_08.png"
+ ],
+ "video": "video.mp4",
+ "strip": "strip.png",
+ "sheet": "sheet.png",
+ "facts": {
+  "device": "redfin-30-en-portrait",
+  "outcome": "Failed",
+  "details": "Application crashed",
+  "test_time_s": 84,
+  "screenshots": 8,
+  "crash_files": 2,
+  "taps": 5,
+  "video_s": 88.2
+ },
+ "notes": []
+}
