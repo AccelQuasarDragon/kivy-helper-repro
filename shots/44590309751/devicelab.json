@@ -1,0 +1,46 @@
+{
+ "workflow": "devicelab.yml",
+ "run_id": "44590309751",
+ "images": [
+  "0.png",
+  "1.png",
+  "2.png",
+  "3.png",
+  "4.png",
+  "5.png",
+  "6.png",
+  "7.png",
+  "8.png",
+  "9.png",
+  "10.png",
+  "11.png",
+  "12.png",
+  "13.png",
+  "14.png",
+  "15.png",
+  "16.png"
+ ],
+ "frames": [
+  "frame_01.png",
+  "frame_02.png",
+  "frame_03.png",
+  "frame_04.png",
+  "frame_05.png",
+  "frame_06.png",
+  "frame_07.png",
+  "frame_08.png"
+ ],
+ "video": "video.mp4",
+ "strip": "strip.png",
+ "sheet": "sheet.png",
+ "facts": {
+  "device": "redfin-30-en-portrait",
+  "outcome": "Passed",
+  "test_time_s": 102,
+  "screenshots": 17,
+  "crash_files": 0,
+  "taps": 7,
+  "video_s": 105.5
+ },
+ "notes": []
+}
